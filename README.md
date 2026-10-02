@@ -1,2 +1,3 @@
-# interactive-prototypes-20261003
-15 interactive HTML prototypes with playable pages and ZIP downloads
+# Interactive Prototypes
+
+15 user-supplied HTML prototypes with individual ZIP downloads.

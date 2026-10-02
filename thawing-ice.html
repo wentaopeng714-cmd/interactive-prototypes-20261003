@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>碎冰 - Thawing Ice</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.js"></script>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #f7f9fa;
+      overflow: hidden;
+      touch-action: none;
+      font-family: 'Times New Roman', Times, serif;
+    }
+    #ui-layer {
+      position: absolute;
+      top: 40%;
+      width: 100%;
+      text-align: center;
+      color: #7a8b99;
+      pointer-events: none;
+      font-size: 16px;
+      letter-spacing: 2px;
+      z-index: 10;
+      transition: opacity 1.5s;
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0% { opacity: 0.5; transform: scale(0.98); }
+      50% { opacity: 1; transform: scale(1); }
+      100% { opacity: 0.5; transform: scale(0.98); }
+    }
+  </style>
+</head>
+<body>
+  <div id="ui-layer">🖱️ 请在画面上点击或滑动以破坏冰层 <br> <span style="font-size: 12px; opacity: 0.8;">(记得打开声音 🔊)</span></div>
+  <script>
+    // ====================================================
+    // 碎冰 (THAWING ICE) - 真实物理与音效版 v2.0
+    // ====================================================
+
+    let iceBlocks = [];
+    let letters = [];
+    let ripples = [];
+    
+    const charPool = ["s", "p", "r", "i", "n", "g", "t", "h", "a", "w", "i", "c", "e"];
+
+    // Web Audio API
+    let audioCtx;
+    let audioInitialized = false;
+
+    function setup() {
+      createCanvas(windowWidth, windowHeight);
+      generateIce();
+    }
+
+    // 初始化音频环境 (需由用户交互触发)
+    function initAudio() {
+      if (!audioInitialized) {
+        let AudioContext = window.AudioContext || window.webkitAudioContext;
+        audioCtx = new AudioContext();
+        // 恢复音频上下文（解决部分浏览器默认挂起的问题）
+        if (audioCtx.state === 'suspended') {
+          audioCtx.resume();
+        }
+        audioInitialized = true;
+        
+        // 隐藏提示文字
+        let ui = document.getElementById('ui-layer');
+        if (ui) {
+          ui.style.animation = 'none';
+          ui.style.opacity = '0';
+        }
+      }
+    }
+
+    // --- 音效合成器 ---
+
+    // 播放冰裂开的声音
+    function playCrackSound() {
+      if (!audioCtx) return;
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      
+      let time = audioCtx.currentTime;
+      
+      // 1. 低频闷响
+      let osc = audioCtx.createOscillator();
+      let gain = audioCtx.createGain();
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(120, time);
+      osc.frequency.exponentialRampToValueAtTime(40, time + 0.3);
+      gain.gain.setValueAtTime(0.7, time);
+      gain.gain.exponentialRampToValueAtTime(0.01, time + 0.3);
+      osc.start(time);
+      osc.stop(time + 0.3);
+
+      // 2. 高频碎裂声
+      let bufferSize = audioCtx.sampleRate * 0.2; 
+      let buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+      let data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+      
+      let noise = audioCtx.createBufferSource();
+      noise.buffer = buffer;
+      let noiseFilter = audioCtx.createBiquadFilter();
+      noiseFilter.type = 'highpass';
+      noiseFilter.frequency.value = 3000; 
+      
+      let noiseGain = audioCtx.createGain();
+      noiseGain.gain.setValueAtTime(0.8, time);
+      noiseGain.gain.exponentialRampToValueAtTime(0.01, time + 0.2);
+      
+      noise.connect(noiseFilter);
+      noiseFilter.connect(noiseGain);
+      noiseGain.connect(audioCtx.destination);
+      noise.start(time);
+    }
+
+    // 滑动时的轻微碎冰声
+    function playSlideSound() {
+      if (!audioCtx) return;
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      
+      let time = audioCtx.currentTime;
+      let osc = audioCtx.createOscillator();
+      let gain = audioCtx.createGain();
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(random(800, 1800), time); 
+      
+      gain.gain.setValueAtTime(0.03, time); 
+      gain.gain.exponentialRampToValueAtTime(0.001, time + 0.08);
+      
+      osc.start(time);
+      osc.stop(time + 0.08);
+    }
+
+    // 生成网格冰块
+    function generateIce() {
+      iceBlocks = [];
+      let cellSize = 85; // 稍大的冰块
+      let cols = ceil(width / cellSize) + 1;
+      let rows = ceil(height / cellSize) + 1;
+      let pts = [];
+
+      // 生成带噪点的不规则网格
+      for (let i = 0; i <= cols; i++) {
+        pts[i] = [];
+        for (let j = 0; j <= rows; j++) {
+          let x = i * cellSize;
+          let y = j * cellSize;
+          if (i > 0 && i < cols && j > 0 && j < rows) {
+            x += random(-cellSize * 0.45, cellSize * 0.45);
+            y += random(-cellSize * 0.45, cellSize * 0.45);
+          }
+          pts[i][j] = createVector(x, y);
+        }
+      }
+
+      for (let i = 0; i < cols; i++) {
+        for (let j = 0; j < rows; j++) {
+          let v1 = pts[i][j];
+          let v2 = pts[i + 1][j];
+          let v3 = pts[i + 1][j + 1];
+          let v4 = pts[i][j + 1];
+
+          let cx = (v1.x + v2.x + v3.x + v4.x) / 4;
+          let cy = (v1.y + v2.y + v3.y + v4.y) / 4;
+
+          let relVerts = [
+            createVector(v1.x - cx, v1.y - cy),
+            createVector(v2.x - cx, v2.y - cy),
+            createVector(v3.x - cx, v3.y - cy),
+            createVector(v4.x - cx, v4.y - cy)
+          ];
+          iceBlocks.push(new IceBlock(cx, cy, relVerts));
+        }
+      }
+    }
+
+    function draw() {
+      // 露出来的水面颜色
+      background(55, 95, 115);
+
+      applyMouseRepulsion();
+
+      for (let block of iceBlocks) {
+        block.update();
+        block.display();
+      }
+
+      for (let i = ripples.length - 1; i >= 0; i--) {
+        ripples[i].update();
+        ripples[i].display();
+        if (ripples[i].isDead()) ripples.splice(i, 1);
+      }
+
+      for (let i = letters.length - 1; i >= 0; i--) {
+        letters[i].update();
+        letters[i].display();
+        if (letters[i].isDead()) letters.splice(i, 1);
+      }
+    }
+
+    function applyMouseRepulsion() {
+      let forceRadius = 120;
+      let isSliding = false;
+      
+      for (let block of iceBlocks) {
+        let d = dist(mouseX, mouseY, block.pos.x, block.pos.y);
+        // 如果鼠标按下并拖动，或者只是单纯移动
+        if (d < forceRadius && mouseIsPressed) {
+          let angle = atan2(block.pos.y - mouseY, block.pos.x - mouseX);
+          let force = map(d, 0, forceRadius, 2.0, 0); 
+          
+          block.vel.x += cos(angle) * force;
+          block.vel.y += sin(angle) * force;
+          block.angularVel += random(-force * 0.008, force * 0.008);
+          
+          if (dist(pmouseX, pmouseY, mouseX, mouseY) > 3) isSliding = true;
+
+          // 拖动时产生字母
+          if (random() < 0.03 && dist(pmouseX, pmouseY, mouseX, mouseY) > 2) {
+            letters.push(new FloatingLetter(mouseX + random(-25, 25), mouseY + random(-25, 25)));
+          }
+        }
+      }
+
+      if (isSliding && frameCount % 6 === 0) {
+        playSlideSound();
+      }
+      
+      if (mouseIsPressed && dist(pmouseX, pmouseY, mouseX, mouseY) > 5 && frameCount % 15 === 0) {
+        ripples.push(new Ripple(mouseX, mouseY, 50, 0.5));
+      }
+    }
+
+    function mousePressed() {
+      initAudio();
+      playCrackSound();
+
+      ripples.push(new Ripple(mouseX, mouseY, 180, 2.5));
+      ripples.push(new Ripple(mouseX, mouseY, 100, 1.2));
+
+      // 强力推开
+      for (let block of iceBlocks) {
+        let d = dist(mouseX, mouseY, block.pos.x, block.pos.y);
+        if (d < 220) {
+          let angle = atan2(block.pos.y - mouseY, block.pos.x - mouseX);
+          let force = map(d, 0, 220, 22, 0); // 增加爆裂推力
+          block.vel.x += cos(angle) * force;
+          block.vel.y += sin(angle) * force;
+          block.angularVel += random(-0.08, 0.08); // 旋转得更猛
+        }
+      }
+
+      // 溅出大量字母
+      for(let i = 0; i < 10; i++) {
+        letters.push(new FloatingLetter(mouseX + random(-40, 40), mouseY + random(-40, 40)));
+      }
+    }
+
+    function mouseDragged() {
+      initAudio();
+    }
+
+    function windowResized() {
+      resizeCanvas(windowWidth, windowHeight);
+      generateIce();
+    }
+
+    // ====================================================
+    // 类定义
+    // ====================================================
+    class IceBlock {
+      constructor(x, y, vertices) {
+        this.origPos = createVector(x, y);
+        this.pos = createVector(x, y);
+        this.vel = createVector(0, 0);
+        this.angle = 0;
+        this.angularVel = 0;
+        this.vertices = vertices;
+        this.iceColor = color(253, 254, 255); // 纯冰色
+      }
+
+      update() {
+        this.pos.add(this.vel);
+        this.angle += this.angularVel;
+        
+        // 增加惯性，让冰块飘得更久一点
+        this.vel.mult(0.85); 
+        this.angularVel *= 0.90; 
+
+        // 复原速度调慢，让裂缝保持更长时间
+        let dx = this.origPos.x - this.pos.x;
+        let dy = this.origPos.y - this.pos.y;
+        this.vel.x += dx * 0.003; 
+        this.vel.y += dy * 0.003;
+        this.angle *= 0.97; 
+      }
+
+      display() {
+        push();
+        translate(this.pos.x, this.pos.y);
+        rotate(this.angle);
+        
+        let displacement = dist(this.origPos.x, this.origPos.y, this.pos.x, this.pos.y);
+        
+        // 完美的无缝处理
+        if (displacement < 0.5) {
+          // 未受力时，描边和填充颜色完全一样，掩盖多边形抗锯齿缝隙
+          stroke(this.iceColor); 
+          strokeWeight(2);
+        } else {
+          // 破裂后，显示冰块的冷灰/浅蓝边缘，增强立体感
+          stroke(215, 225, 230); 
+          strokeWeight(1.5);
+        }
+        strokeJoin(ROUND);
+        
+        let scaleFactor = map(displacement, 0, 100, 1, 0.93);
+        scaleFactor = constrain(scaleFactor, 0.93, 1);
+        scale(scaleFactor);
+
+        fill(this.iceColor);
+        beginShape();
+        for (let v of this.vertices) {
+          vertex(v.x, v.y);
+        }
+        endShape(CLOSE);
+        pop();
+      }
+    }
+
+    class FloatingLetter {
+      constructor(x, y) {
+        this.pos = createVector(x, y);
+        this.vel = createVector(random(-0.5, 0.5), random(-0.2, -1.8)); 
+        this.life = 255;
+        this.char = random(charPool);
+        this.size = random(12, 18); // 字母稍微变大一点更显眼
+      }
+
+      update() {
+        this.pos.add(this.vel);
+        this.vel.y -= 0.01; 
+        this.vel.x += random(-0.04, 0.04); 
+        this.life -= 1.2; 
+      }
+
+      display() {
+        push();
+        fill(140, 160, 170, this.life); 
+        noStroke();
+        textSize(this.size);
+        textAlign(CENTER, CENTER);
+        text(this.char, this.pos.x, this.pos.y);
+        pop();
+      }
+
+      isDead() { return this.life <= 0; }
+    }
+
+    class Ripple {
+      constructor(x, y, maxRadius, expansionSpeed) {
+        this.pos = createVector(x, y);
+        this.radius = 5;
+        this.maxRadius = maxRadius;
+        this.speed = expansionSpeed;
+        this.alpha = 180;
+      }
+
+      update() {
+        this.radius += this.speed;
+        this.alpha -= (180 / (this.maxRadius / this.speed));
+      }
+
+      display() {
+        push();
+        noFill();
+        stroke(220, 235, 245, this.alpha);
+        strokeWeight(2);
+        circle(this.pos.x, this.pos.y, this.radius * 2);
+        pop();
+      }
+
+      isDead() { return this.alpha <= 0; }
+    }
+  </script>
+</body>
+</html>

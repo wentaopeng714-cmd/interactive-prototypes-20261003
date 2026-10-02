@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pseudo Ink Drawing</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.js"></script>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden; /* Prevent scrollbars */
+      background-color: rgb(200,120,30); /* Match sketch background */
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+    }
+    canvas {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+
+  <script>
+    // https://openprocessing.org/user/254781
+    // A sketch for pseudo ink drawing  
+    // implements perlin noise and recursion
+
+    let particles = []; // array of particles
+
+    function setup() {
+      createCanvas(windowWidth, windowHeight);
+      colorMode(HSB, 360, 100, 100, 255); // 切换为HSB模式方便控制色彩
+      background(32, 85, 78, 20); // HSB模式下与原来RGB(200,120,30)相近的纸张颜色
+    }
+
+    function draw() {
+      
+      if (mouseIsPressed)  {
+        // 传入一个随时间变化的色相值 (frameCount)
+        let currentHue = (frameCount * 2) % 360;
+        particles.push(new Particle(mouseX, mouseY, 5, 75, currentHue)); 
+      }
+      // update and show the particles
+      for (let i = particles.length - 1; i >= 0; i--) { // Fixed index from length-2 to length-1 to avoid missing the last element
+        particles[i].update(particles);
+        particles[i].show();
+        if (particles[i].alpha <= 2) {
+            particles.splice(i, 1); // Fixed splice count from 5 to 1 to only remove the dead particle
+        }
+      }
+    }
+
+    // particle class
+    class Particle {
+      
+      // constructor called when creating an instance of this class
+      // x & y are the location, r is the rate of decay, a is the starting alpha value, h is the hue
+      constructor(x, y, r, a, h) {
+        this.location = createVector(x, y);
+        this.velocity = createVector(random(-1, 1), random(-1, 1));
+        this.acceleration = createVector();
+        this.alpha = this.palpha = a;
+        this.amp = 3; // size of the particle
+        this.rate = r;
+        this.hue = h || 0; // 记录粒子的颜色属性
+      }
+      
+      // update the velocity and location of particle
+      update(p) {
+        // Use a smaller scale for the noise coordinates to make the movement smoother
+        let noiseScale = 0.01;
+        this.acceleration.add(createVector((noise(this.location.x * noiseScale, this.location.y * noiseScale) * 2 - 1), (noise(this.location.y * noiseScale, this.location.x * noiseScale) * 2 - 1)));
+        
+        // Add some damping to the velocity so it doesn't spiral out of control immediately
+        this.velocity.mult(0.95);
+        this.velocity.add(this.acceleration);
+        this.acceleration.set(0, 0);
+        this.location.add(this.velocity);
+        this.alpha -= this.rate;
+        // this.amp-= this.rate ;
+        this.hue = (this.hue + 1) % 360; // 粒子在流动时，颜色也会缓慢渐变
+        
+        // here is the recursion condition
+        if (this.alpha <= this.palpha * 0.25 && this.palpha > 10) {
+          // 产生递归分支时，色相强制发生明显偏移 (+45)，制造绚丽的分支效果
+          p.push(new Particle(this.location.x, this.location.y, this.rate * 0.25, this.palpha * 0.5, (this.hue + 45) % 360));
+        }
+      }
+      
+      // show the particles
+      show() {
+        noStroke();
+        fill(this.hue, 85, 80, this.alpha); // 使用该粒子的特有颜色绘制
+        ellipse(this.location.x, this.location.y, this.amp);
+      }
+      
+    } // end Particle class
+    
+    function windowResized() {
+      resizeCanvas(windowWidth, windowHeight);
+      background(32, 85, 78, 20); // 窗口调整时也使用HSB重绘画布
+    }
+  </script>
+</body>
+</html>

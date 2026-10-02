@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pointillism Landscape</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.js"></script>
+  <style>
+    /* 页面背景设置得深邃一些，让白色的画布像艺术品一样凸显出来 */
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #1a1c23;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* 给生成的画布加上画框般的阴影效果 */
+    canvas {
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+      border-radius: 4px;
+    }
+    
+    /* 增加一个 UI 提示 */
+    #ui-hint {
+      position: absolute;
+      top: 20px;
+      color: rgba(255, 255, 255, 0.5);
+      font-family: sans-serif;
+      font-size: 13px;
+      letter-spacing: 1px;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="ui-hint">🖱️ 横向滑动控制风速，纵向滑动控制海浪 | 靠近画布拨开颜料 | 点击切换日夜</div>
+  <script>
+    // 定义多种天气/时间的调色板
+    let palettes = [
+      { // 白天 (Day)
+        water: ['#5d809a', '#70a0b8', '#8aa0b8', '#436d79'],
+        sand: ['#af967a', '#bd9f80', '#bfa28c', '#826d51', '#bba385'],
+        sky: ['#6ea7dc', '#84b3dd', '#5d98d1', '#96b0cd', '#99b8d3']
+      },
+      { // 黄昏 (Sunset)
+        water: ['#995d63', '#b87076', '#b88a8d', '#794350'],
+        sand: ['#9a6a57', '#a8755e', '#b88874', '#785040', '#ab7861'],
+        sky: ['#dc896e', '#dd9a84', '#d1725d', '#cd96aa', '#d399b1']
+      },
+      { // 夜晚 (Night)
+        water: ['#1a2a3a', '#22384c', '#2c475e', '#101a24'],
+        sand: ['#3d434a', '#4b525a', '#5a626c', '#2c3136', '#485058'],
+        sky: ['#1a2436', '#25334c', '#314466', '#141c2b', '#202c42']
+      }
+    ];
+    let currentPalette = 0;
+    
+    let waterColors, sandColors, skyColors;
+    let simplex;
+    let rs;
+    let mover = 0;
+
+    // 兼容原作者调用的 OpenSimplexNoise 库
+    // 这里使用 p5.js 内置的 noise 映射来模拟该库返回的 [-1, 1] 区间值
+    class OpenSimplexNoise {
+      constructor(seed) {
+        if (seed) randomSeed(seed);
+      }
+      noise3D(x, y, z) {
+        return map(noise(x, y, z), 0, 1, -1, 1);
+      }
+    }
+
+    function setup() {
+      // 竖屏构图 (高宽比 4:3)
+      createCanvas(windowHeight * 0.75, windowHeight);
+      rs = random(1000);
+      simplex = new OpenSimplexNoise(Date.now());
+      
+      // 初始化颜色
+      waterColors = palettes[0].water;
+      sandColors = palettes[0].sand;
+      skyColors = palettes[0].sky;
+    }
+
+    // 辅助函数：绘制会对鼠标产生排斥反应（磁性散开）的点
+    function drawInteractivePoint(px, py, col, weight) {
+      let d = dist(px, py, mouseX, mouseY);
+      let offsetX = 0;
+      let offsetY = 0;
+      
+      // 当鼠标靠近时，颜料点会被向四周排开
+      if (d < 80) {
+        let force = map(d, 0, 80, 15, 0); // 排斥的力度
+        let angle = atan2(py - mouseY, px - mouseX);
+        offsetX = cos(angle) * force;
+        offsetY = sin(angle) * force;
+      }
+      
+      stroke(col);
+      strokeWeight(weight);
+      point(px + offsetX, py + offsetY);
+    }
+
+    function draw() {
+      // 锁定随机种子，让静态物体的点在每帧保持稳定，防止全屏雪花般闪烁
+      randomSeed(rs);
+      
+      // 根据日夜变化调整背景底色
+      background(currentPalette === 2 ? 15 : 255);
+      
+      // 交互：鼠标横向移动控制风速（云朵及水纹的流速）
+      let windSpeed = map(mouseX, 0, width, 0.2, 3, true); 
+      mover += windSpeed;
+
+      // 交互：鼠标纵向移动控制海浪汹涌程度
+      let waveMultiplier = map(mouseY, 0, height, 0.2, 1.8, true);
+
+      // 绘制天空云彩
+      for (let y = 0; y <= height / 2; y += 5) {
+        for (let x = 0; x <= width + 5; x += 5) {
+          let col = random(skyColors);
+          let w = map(noise(y / 50, (x + mover) / 100), 0, 1, 0, 8);
+          drawInteractivePoint(x, y, col, w);
+        }
+      }
+      
+      // 绘制沙滩
+      for (let y = height * 0.7; y < height; y += 5) {
+        for (let x = 0; x <= width; x += 5) {
+          let col = random(sandColors);
+          let w = noise(x, y) * 5;
+          let px = x - noise(y / 10) * 2;
+          let py = y - noise(x / 20, y / 20) * 10;
+          drawInteractivePoint(px, py, col, w);
+        }
+      }
+      
+      // 绘制海浪
+      let power = 3 * waveMultiplier;
+      for (let y = height / 2; y < height * 0.75; y += 5) {
+        for (let x = 0; x <= width + 5; x += 5) {
+          let col = random(waterColors);
+          let w = 4.5;
+          
+          let yer = map(
+            simplex.noise3D(x / 200, (y + sin(mover / 30) * power) / 80, mover / 50), 
+            -1, 1, 
+            -power + sin(mover / 10), 
+            power + sin(mover / 10)
+          );
+          
+          drawInteractivePoint(x, y + yer, col, w);
+        }
+        power += 2 * waveMultiplier;
+      }
+    }
+
+    function mousePressed() {
+      // 点击切换调色板 (白天 -> 黄昏 -> 夜晚)
+      currentPalette = (currentPalette + 1) % palettes.length;
+      waterColors = palettes[currentPalette].water;
+      sandColors = palettes[currentPalette].sand;
+      skyColors = palettes[currentPalette].sky;
+    }
+
+    function windowResized() {
+      resizeCanvas(windowHeight * 0.75, windowHeight);
+    }
+  </script>
+</body>
+</html>

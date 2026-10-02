@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>等距透视印章交互原型 - ISOMETRIC STAMP PROTOTYPE</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    body, html {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #d8b0b6; /* 严格对齐原图纯正暖粉藕色背景 */
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* 主视口居中舞台：保持 4:3 黄金展示比例，全屏自适应 */
+    #stage-container {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      max-width: 133.33vh;
+      max-height: 75vw;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    svg#scene {
+      width: 100%;
+      height: 100%;
+      display: block;
+      overflow: visible;
+    }
+
+    /* 悬浮印章平滑缓动物理动画 */
+    #stamp-rig {
+      cursor: pointer;
+      transition: transform 0.16s cubic-bezier(0.2, 0.9, 0.3, 1.15);
+      will-change: transform;
+    }
+
+    /* 纸面常驻印记图层 */
+    #active-imprint {
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.1s ease-out;
+    }
+
+    #active-imprint.visible {
+      opacity: 0.88;
+    }
+
+    /* 飞出纸张的平滑漂移动画 */
+    .flying-sheet {
+      pointer-events: none;
+      will-change: transform, opacity;
+      animation: paperFloatAway 0.85s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+    }
+
+    @keyframes paperFloatAway {
+      0% {
+        transform: translate3d(0, 0, 0) rotate(0deg);
+        opacity: 0.96;
+      }
+      25% {
+        transform: translate3d(45px, -35px, 0) rotate(2.5deg);
+        opacity: 0.94;
+      }
+      65% {
+        transform: translate3d(240px, -50px, 0) rotate(7deg);
+        opacity: 0.85;
+      }
+      100% {
+        transform: translate3d(520px, -20px, 0) rotate(14deg);
+        opacity: 0;
+      }
+    }
+
+    /* 左下角极简信息图说明指示牌 */
+    .prototype-hud {
+      position: absolute;
+      bottom: 24px;
+      left: 28px;
+      background: rgba(255, 255, 255, 0.65);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-radius: 14px;
+      padding: 12px 18px;
+      color: #5c3840;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      pointer-events: none;
+      box-shadow: 0 4px 24px rgba(90, 40, 50, 0.1);
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .prototype-hud .status-row {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 11px;
+      color: #7b4b54;
+    }
+
+    .prototype-hud .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #7ed4bc;
+      transition: background-color 0.2s ease, transform 0.2s ease;
+    }
+
+    .prototype-hud .status-dot.active {
+      background: #dc484f;
+      transform: scale(1.25);
+    }
+
+    .counter-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-weight: 800;
+      color: #dc484f;
+      font-size: 11px;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="stage-container">
+    <svg id="scene" viewBox="0 0 900 700" xmlns="http://www.w3.org/2000/svg">
+      <!-- 1. 淡粉纯色底色 (精确还原 #d8b0b6) -->
+      <rect width="900" height="700" fill="#d8b0b6" />
+
+      <!-- 2. 收纳盒与纸叠投射向右下方的等距平行长投影 (无描边纯色块) -->
+      <polygon points="415,572 900,852 900,520 696,410" fill="#c39aa2" />
+
+      <!-- ========================================================
+           3. 薄荷绿文件收纳盒 (Mint Green Box)
+           采用真实 30° 等距投影坐标系：严密平直无裂缝
+           ======================================================== -->
+      <g id="storage-tray">
+        <!-- 盒子正面 (朝向左下：受光面浅薄荷绿 #7ed4bc) -->
+        <polygon points="204,450 415.4,572 415.4,520 204,398" fill="#7ed4bc" />
+
+        <!-- 盒子右侧面 (朝向右下：背光深薄荷绿 #5dbda2) -->
+        <polygon points="415.4,572 696,410 696,358 415.4,520" fill="#5dbda2" />
+
+        <!-- 盒子正面的扁长圆角把手挖孔 (严格贴合 30° 倾角平滑嵌入) -->
+        <g id="tray-handle" transform="translate(309.7, 497) matrix(0.866025, 0.5, 0, 1, 0, 0)">
+          <!-- 把手孔内阴影底板 -->
+          <rect x="-38" y="-13" width="76" height="26" rx="10" ry="10" fill="#469b84" />
+          <!-- 孔内壁上缘高光微切面 -->
+          <path d="M -38 -4 C -38 -13, -28 -13, -20 -13 L 20 -13 C 28 -13, 38 -13, 38 -4 L 38 -1 L -38 -1 Z" fill="#3c8b76" />
+        </g>
+      </g>
+
+      <!-- ========================================================
+           4. 一叠白纸基座 (Pristine Stack Base)
+           厚实、平整、纯净无杂乱裂纹，100% 严丝合缝坐落于盒内
+           ======================================================== -->
+      <g id="paper-stack" style="cursor: pointer;">
+        <!-- 纸叠正面左侧边 (受光纸张浅灰面) -->
+        <polygon points="225,335 415.4,445 415.4,508 225,398" fill="#e7ebed" />
+
+        <!-- 极细腻的一两道纸层结构水平接缝 (严格平行于等距轴，自然整齐) -->
+        <line x1="225" y1="365" x2="415.4" y2="475" stroke="#dbe0e3" stroke-width="1.2" />
+        <line x1="225" y1="382" x2="415.4" y2="492" stroke="#dbe0e3" stroke-width="1.2" />
+
+        <!-- 纸叠右侧边 (背光阴影纸张灰面) -->
+        <polygon points="415.4,445 675.2,295 675.2,358 415.4,508" fill="#d2d7da" />
+        <line x1="415.4" y1="475" x2="675.2" y2="325" stroke="#c5cbcf" stroke-width="1.2" />
+        <line x1="415.4" y1="492" x2="675.2" y2="342" stroke="#c5cbcf" stroke-width="1.2" />
+
+        <!-- 纸叠顶面 (纯净无瑕白纸菱形，中心点精确位于 (450, 315)) -->
+        <polygon id="paper-top" points="484.6,185 224.8,335 415.4,445 675.2,295" fill="#fbfcfd" />
+
+        <!-- 纸张表面常驻印记槽 (严格贴合纸面 30° 空间仿射矩阵) -->
+        <g id="active-imprint" transform="translate(450, 315) matrix(0.866025, 0.5, -0.866025, 0.5, 0, 0)">
+          <g id="active-imprint-inner"></g>
+        </g>
+      </g>
+
+      <!-- 动态飞走纸张容器 (放置正在飞向远方的带印纸张) -->
+      <g id="flying-papers-container"></g>
+
+      <!-- ========================================================
+           5. 悬浮橡皮木柄印章 (Floating Rubber Stamp Rig)
+           静止悬停于正上方；下落 140px 时橡皮面精准触底吻合纸面
+           ======================================================== -->
+      <g id="stamp-rig" transform="translate(0, 0)">
+        <!-- 压紧接触阴影：平时悬空完全隐藏，触纸瞬间显现 -->
+        <g id="stamp-contact-shadow" opacity="0" style="transition: opacity 0.12s ease;">
+          <polygon points="450,175 354.7,230 450,285 545.3,230" fill="#a7b3b9" opacity="0.45" />
+        </g>
+
+        <!-- A. 印章底部深炭黑橡皮层 (Rubber Layer)
+             底面菱形在悬停态位于 (450, 175)，下落 140px 后正好与白纸顶面 (450, 315) 彻底贴合！
+        -->
+        <g id="stamp-rubber">
+          <!-- 橡皮左受光侧面 -->
+          <polygon points="354.7,165 450,220 450,210 354.7,155" fill="#524f53" />
+          <!-- 橡皮右背光侧面 -->
+          <polygon points="450,220 545.3,165 545.3,155 450,210" fill="#3d3a3e" />
+        </g>
+
+        <!-- B. 木质基座厚块 (Wooden Base Block) -->
+        <g id="stamp-wood">
+          <!-- 木座左受光侧面 (原图浅驼木色) -->
+          <polygon points="354.7,155 450,210 450,180 354.7,125" fill="#cead8b" />
+          <!-- 木座右背光侧面 (原图深驼木色) -->
+          <polygon points="450,210 545.3,165 545.3,135 450,180" fill="#b79371" />
+          <!-- 木座顶面 (受光浅金色) -->
+          <polygon points="450,95 354.7,125 450,180 545.3,135" fill="#debfa0" />
+        </g>
+
+        <!-- C. 蘑菇型深灰圆润木手柄 (Turned Wooden Handle) -->
+        <g id="stamp-handle">
+          <!-- 贴在木座顶面的圆弧底座裙边 -->
+          <ellipse cx="450" cy="138" rx="34" ry="19.5" fill="#585353" />
+          <ellipse cx="450" cy="136.5" rx="32" ry="18" fill="#656060" />
+
+          <!-- 下段喇叭状收缩弧颈 -->
+          <path d="M 422 133 
+                   C 422 105, 432 85, 436 65 
+                   L 464 65 
+                   C 468 85, 478 105, 478 133 
+                   Z" fill="#696464" />
+
+          <!-- 上段圆柱过渡连接段 -->
+          <path d="M 436 65 
+                   C 432 35, 417 25, 417 -5 
+                   C 417 -40, 483 -40, 483 -5 
+                   C 483 25, 468 35, 464 65 
+                   Z" fill="#696464" />
+
+          <!-- 顶部球形握柄主体 -->
+          <ellipse cx="450" cy="-2" rx="43" ry="44" fill="#696464" />
+
+          <!-- 球形顶端标志性两道柔光高光 (原图精髓椭圆光斑) -->
+          <ellipse cx="434" cy="-14" rx="13" ry="16" transform="rotate(-18 434 -14)" fill="#9e9897" />
+          <ellipse cx="432" cy="-16" rx="8" ry="11" transform="rotate(-18 432 -16)" fill="#ffffff" />
+        </g>
+
+        <!-- 扩展全印章透明感应热区 (确保鼠标 hover / click 极其灵敏) -->
+        <rect x="340" y="-55" width="220" height="285" fill="transparent" style="cursor: pointer;" />
+      </g>
+    </svg>
+
+    <!-- 原型状态与交互说明 HUD -->
+    <div class="prototype-hud">
+      <div class="status-row">
+        <span class="status-dot" id="status-dot"></span>
+        <span id="status-text">CLICK TO STAMP & FLY</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 2px;">
+        <span style="opacity: 0.82; font-weight: 500;">DOCUMENTS PROCESSED</span>
+        <span class="counter-pill" id="counter-val">📄 0</span>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    /* ==========================================================
+       轻量级拟真音效合成器 (纯原生 Web Audio，无外部文件)
+       ========================================================== */
+    class StampAudio {
+      constructor() {
+        this.ctx = null;
+      }
+      init() {
+        if (!this.ctx) {
+          const AudioContext = window.AudioContext || window.webkitAudioContext;
+          this.ctx = new AudioContext();
+        }
+        if (this.ctx.state === 'suspended') this.ctx.resume();
+      }
+
+      // 1. 印章完全盖下：沉稳结实的纸面木质撞击声 "Thud-Thump"
+      playStampDown() {
+        this.init();
+        if (!this.ctx) return;
+        const now = this.ctx.currentTime;
+
+        // 低频木质顿感
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(175, now);
+        osc.frequency.exponentialRampToValueAtTime(32, now + 0.11);
+
+        gain.gain.setValueAtTime(0.42, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.13);
+
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.13);
+
+        // 纸张微摩擦白噪
+        const bufferSize = this.ctx.sampleRate * 0.04;
+        const noiseBuffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+        const output = noiseBuffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+          output[i] = Math.random() * 2 - 1;
+        }
+        const whiteNoise = this.ctx.createBufferSource();
+        whiteNoise.buffer = noiseBuffer;
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'bandpass';
+        filter.frequency.setValueAtTime(850, now);
+        filter.Q.setValueAtTime(2.2, now);
+
+        const noiseGain = this.ctx.createGain();
+        noiseGain.gain.setValueAtTime(0.14, now);
+        noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
+
+        whiteNoise.connect(filter);
+        filter.connect(noiseGain);
+        noiseGain.connect(this.ctx.destination);
+        whiteNoise.start(now);
+      }
+
+      // 2. 印章抬起复位：清脆轻巧的橡皮回弹声
+      playStampUp() {
+        this.init();
+        if (!this.ctx) return;
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(300, now);
+        osc.frequency.exponentialRampToValueAtTime(560, now + 0.08);
+
+        gain.gain.setValueAtTime(0.18, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.1);
+      }
+
+      // 3. 纸张飞走：清脆柔和的风声呼啸 "Fwoosh~"
+      playPaperWhoosh() {
+        this.init();
+        if (!this.ctx) return;
+        const now = this.ctx.currentTime;
+        const dur = 0.35;
+        const bufferSize = Math.floor(this.ctx.sampleRate * dur);
+        const noiseBuffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+        const output = noiseBuffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+          output[i] = Math.random() * 2 - 1;
+        }
+        const whiteNoise = this.ctx.createBufferSource();
+        whiteNoise.buffer = noiseBuffer;
+
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'bandpass';
+        filter.frequency.setValueAtTime(1200, now);
+        filter.frequency.exponentialRampToValueAtTime(450, now + dur);
+        filter.Q.setValueAtTime(1.8, now);
+
+        const gain = this.ctx.createGain();
+        gain.gain.setValueAtTime(0.001, now);
+        gain.gain.linearRampToValueAtTime(0.18, now + 0.06);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + dur);
+
+        whiteNoise.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.ctx.destination);
+        whiteNoise.start(now);
+      }
+    }
+
+    const sound = new StampAudio();
+
+    /* ==========================================================
+       丰富的 8 款高品质矢量印章印记图案库
+       ========================================================== */
+    const STAMP_DESIGNS = [
+      // 0: APPROVED 官方批准双框章
+      `
+        <rect x="-65" y="-38" width="130" height="76" rx="10" ry="10" fill="none" stroke="#dc484f" stroke-width="5" />
+        <rect x="-57" y="-30" width="114" height="60" rx="6" ry="6" fill="none" stroke="#dc484f" stroke-width="2" stroke-dasharray="5 3" />
+        <text x="0" y="6" text-anchor="middle" fill="#dc484f" font-size="20" font-weight="900" font-family="sans-serif" letter-spacing="2">APPROVED</text>
+        <line x1="-32" y1="-17" x2="32" y2="-17" stroke="#dc484f" stroke-width="2.5" stroke-linecap="round" />
+        <line x1="-32" y1="19" x2="32" y2="19" stroke="#dc484f" stroke-width="2.5" stroke-linecap="round" />
+        <text x="0" y="30" text-anchor="middle" fill="#dc484f" font-size="8" font-weight="900" font-family="sans-serif" letter-spacing="3">★ OFFICIAL PASS ★</text>
+      `,
+      // 1: TOP SECRET 经典椭圆双环机密印
+      `
+        <ellipse cx="0" cy="0" rx="68" ry="44" fill="none" stroke="#dc484f" stroke-width="5" />
+        <ellipse cx="0" cy="0" rx="60" ry="36" fill="none" stroke="#dc484f" stroke-width="2" stroke-dasharray="6 3" />
+        <text x="0" y="-8" text-anchor="middle" fill="#dc484f" font-size="11" font-weight="900" font-family="sans-serif" letter-spacing="3">★ CONFIDENTIAL ★</text>
+        <text x="0" y="14" text-anchor="middle" fill="#dc484f" font-size="18" font-weight="900" font-family="sans-serif" letter-spacing="2">TOP SECRET</text>
+      `,
+      // 2: 萌趣猫爪印章 (CAT PAW)
+      `
+        <circle cx="0" cy="0" r="48" fill="none" stroke="#dc484f" stroke-width="4.5" stroke-dasharray="6 4" />
+        <ellipse cx="0" cy="11" rx="25" ry="18" fill="#dc484f" />
+        <circle cx="-20" cy="-12" r="7.5" fill="#dc484f" />
+        <circle cx="-7" cy="-21" r="8.5" fill="#dc484f" />
+        <circle cx="8" cy="-21" r="8.5" fill="#dc484f" />
+        <circle cx="21" cy="-12" r="7.5" fill="#dc484f" />
+        <text x="0" y="42" text-anchor="middle" fill="#dc484f" font-size="10" font-weight="900" font-family="sans-serif" letter-spacing="1.5">EXCELLENT!</text>
+      `,
+      // 3: 治愈系眨眼笑脸章 (HAVE A NICE DAY)
+      `
+        <circle cx="0" cy="0" r="48" fill="none" stroke="#dc484f" stroke-width="5" />
+        <circle cx="-16" cy="-10" r="5.5" fill="#dc484f" />
+        <path d="M 9 -9 Q 18 -16 27 -9" fill="none" stroke="#dc484f" stroke-width="4.5" stroke-linecap="round" />
+        <path d="M -22 10 Q 0 35 22 10" fill="none" stroke="#dc484f" stroke-width="5" stroke-linecap="round" />
+        <text x="0" y="38" text-anchor="middle" fill="#dc484f" font-size="9" font-weight="900" font-family="sans-serif" letter-spacing="2">HAVE A NICE DAY</text>
+      `,
+      // 4: VERIFIED 权威齿轮圆标合格印
+      `
+        <circle cx="0" cy="0" r="50" fill="none" stroke="#dc484f" stroke-width="5" />
+        <circle cx="0" cy="0" r="42" fill="none" stroke="#dc484f" stroke-width="1.8" />
+        <path d="M -20 0 L -6 14 L 22 -14" fill="none" stroke="#dc484f" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" />
+        <text x="0" y="32" text-anchor="middle" fill="#dc484f" font-size="12" font-weight="900" font-family="sans-serif" letter-spacing="3">VERIFIED</text>
+      `,
+      // 5: WITH LOVE 甜蜜心形章
+      `
+        <rect x="-60" y="-36" width="120" height="72" rx="14" ry="14" fill="none" stroke="#dc484f" stroke-width="4.5" />
+        <path d="M 0 -6 C 0 -16, -16 -22, -20 -10 C -24 2, 0 18, 0 18 C 0 18, 24 2, 20 -10 C 16 -22, 0 -16, 0 -6 Z" fill="#dc484f" />
+        <text x="0" y="28" text-anchor="middle" fill="#dc484f" font-size="12" font-weight="900" font-family="sans-serif" letter-spacing="2">WITH LOVE</text>
+      `,
+      // 6: COFFEE BREAK 休闲咖啡章
+      `
+        <circle cx="0" cy="0" r="48" fill="none" stroke="#dc484f" stroke-width="4.5" />
+        <path d="M -16 -4 L 16 -4 L 12 18 C 12 24, -12 24, -12 18 Z" fill="none" stroke="#dc484f" stroke-width="4" stroke-linejoin="round" />
+        <path d="M 16 0 Q 25 2 14 12" fill="none" stroke="#dc484f" stroke-width="3" />
+        <path d="M -6 -10 Q -2 -16 -6 -22" fill="none" stroke="#dc484f" stroke-width="2.5" stroke-linecap="round" />
+        <path d="M 4 -10 Q 8 -16 4 -22" fill="none" stroke="#dc484f" stroke-width="2.5" stroke-linecap="round" />
+        <text x="0" y="38" text-anchor="middle" fill="#dc484f" font-size="10" font-weight="900" font-family="sans-serif" letter-spacing="1.5">BREAK TIME</text>
+      `,
+      // 7: 经典付讫章 (PAID)
+      `
+        <rect x="-56" y="-30" width="112" height="60" rx="8" ry="8" fill="none" stroke="#dc484f" stroke-width="5" />
+        <text x="0" y="10" text-anchor="middle" fill="#dc484f" font-size="30" font-weight="900" font-family="sans-serif" letter-spacing="4">PAID</text>
+        <line x1="-42" y1="20" x2="42" y2="20" stroke="#dc484f" stroke-width="2" />
+      `
+    ];
+
+    /* ==========================================================
+       交互状态机：按压盖印 -> 抬起时图标依然在 -> 纸张飞走流转
+       ========================================================== */
+    const stampRig = document.getElementById('stamp-rig');
+    const stampShadow = document.getElementById('stamp-contact-shadow');
+    const activeImprint = document.getElementById('active-imprint');
+    const activeImprintInner = document.getElementById('active-imprint-inner');
+    const flyingPapersContainer = document.getElementById('flying-papers-container');
+    const paperStack = document.getElementById('paper-stack');
+    const statusDot = document.getElementById('status-dot');
+    const statusText = document.getElementById('status-text');
+    const counterVal = document.getElementById('counter-val');
+
+    let isBusy = false;       // 防止高频重叠触发连击打乱动作流
+    let isHovered = false;    // 是否处于悬停预按压态
+    let currentPatternIdx = -1;
+    let processedCount = 0;   // 已盖印流转的文件计数器
+
+    // 随机获取下一个不重复的图案
+    function getNextRandomPattern() {
+      let nextIdx;
+      do {
+        nextIdx = Math.floor(Math.random() * STAMP_DESIGNS.length);
+      } while (nextIdx === currentPatternIdx);
+      currentPatternIdx = nextIdx;
+      const subtleDeg = (Math.random() - 0.5) * 5;
+      return {
+        svg: STAMP_DESIGNS[nextIdx],
+        rot: subtleDeg
+      };
+    }
+
+    // 1. 鼠标悬停 (Hover Enter) -> 下沉 25px 预按压
+    stampRig.addEventListener('pointerenter', () => {
+      isHovered = true;
+      if (!isBusy) {
+        stampRig.style.transform = 'translate3d(0, 25px, 0)';
+        statusText.textContent = 'READY TO STAMP // CLICK TO PRESS';
+      }
+    });
+
+    // 2. 鼠标离开 (Hover Leave) -> 复位
+    stampRig.addEventListener('pointerleave', () => {
+      isHovered = false;
+      if (!isBusy) {
+        stampRig.style.transform = 'translate3d(0, 0px, 0)';
+        statusText.textContent = 'CLICK TO STAMP & FLY';
+      }
+    });
+
+    /**
+     * 核心动效：创建并起飞一张带有指定印章印记的白纸
+     */
+    function launchFlyingPaper(patternData) {
+      // 播放清脆的纸张飞掠风声
+      sound.playPaperWhoosh();
+
+      // 构建一个包含白纸顶面和相同图案的 SVG 独立克隆节点
+      const flyingGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      flyingGroup.setAttribute('class', 'flying-sheet');
+
+      // 柔和的纸张阴影
+      const shadowPoly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+      shadowPoly.setAttribute('points', '484.6,185 224.8,335 415.4,445 675.2,295');
+      shadowPoly.setAttribute('fill', '#b89aa2');
+      shadowPoly.setAttribute('opacity', '0.4');
+      shadowPoly.setAttribute('transform', 'translate(8, 14)');
+
+      // 白纸顶面
+      const paperPoly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+      paperPoly.setAttribute('points', '484.6,185 224.8,335 415.4,445 675.2,295');
+      paperPoly.setAttribute('fill', '#fbfcfd');
+
+      // 印记图层
+      const imprintG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      imprintG.setAttribute('transform', `translate(450, 315) matrix(0.866025, 0.5, -0.866025, 0.5, 0, 0) rotate(${patternData.rot})`);
+      imprintG.setAttribute('opacity', '0.88');
+      imprintG.innerHTML = patternData.svg;
+
+      flyingGroup.appendChild(shadowPoly);
+      flyingGroup.appendChild(paperPoly);
+      flyingGroup.appendChild(imprintG);
+      flyingPapersContainer.appendChild(flyingGroup);
+
+      // 动画完成后自动从 DOM 销毁清理
+      setTimeout(() => {
+        if (flyingGroup.parentNode) {
+          flyingGroup.parentNode.removeChild(flyingGroup);
+        }
+      }, 900);
+    }
+
+    /**
+     * 点击触发完整盖印流转：
+     * 1. 印章稳实盖下 (140px)，落地发声；
+     * 2. 印章弹起复位，抬上来时【印记稳稳留在纸上】！
+     * 3. 紧接着，盖好章的这页纸【带着图标优雅滑翔飞走】，下方纸堆露出全新的空白页，准备下一次盖印！
+     */
+    function triggerStampCycle(e) {
+      if (e) e.stopPropagation();
+      if (isBusy) return;
+      isBusy = true;
+
+      const patternData = getNextRandomPattern();
+
+      // ---- 阶段 1: 印章完全盖下压实 (Down: 140px) ----
+      sound.playStampDown();
+      statusDot.classList.add('active');
+      statusText.textContent = 'STAMPING DOWN...';
+
+      stampRig.style.transition = 'transform 0.12s cubic-bezier(0.2, 0.8, 0.35, 1.1)';
+      stampRig.style.transform = 'translate3d(0, 140px, 0)';
+      stampShadow.setAttribute('opacity', '0.45');
+
+      // 印泥显现于当前纸上
+      activeImprintInner.innerHTML = patternData.svg;
+      activeImprintInner.setAttribute('transform', `rotate(${patternData.rot})`);
+      activeImprint.classList.add('visible');
+
+      // ---- 阶段 2: 印章迅速弹起抬上 (Lift Up: 图标依然清晰保留在纸上!) ----
+      setTimeout(() => {
+        sound.playStampUp();
+        stampRig.style.transition = 'transform 0.24s cubic-bezier(0.34, 1.45, 0.64, 1)';
+        stampRig.style.transform = isHovered ? 'translate3d(0, 25px, 0)' : 'translate3d(0, 0px, 0)';
+        stampShadow.setAttribute('opacity', '0');
+
+        statusText.textContent = 'STAMPED! FLYING AWAY...';
+
+        // ---- 阶段 3: 稍作停留让用户看清印好的图标，随后被盖印的纸张优雅飞走! ----
+        setTimeout(() => {
+          // 当前静态印记瞬间移交给飞走纸张动画
+          activeImprint.classList.remove('visible');
+          launchFlyingPaper(patternData);
+
+          // 递增已处理文件计数
+          processedCount++;
+          counterVal.textContent = `📄 ${processedCount}`;
+          statusDot.classList.remove('active');
+          statusText.textContent = 'COMPLETED! CLICK NEXT';
+
+          // 动作完成，解除忙碌锁定
+          setTimeout(() => {
+            isBusy = false;
+            if (isHovered) {
+              statusText.textContent = 'READY TO STAMP // CLICK TO PRESS';
+            } else {
+              statusText.textContent = 'CLICK TO STAMP & FLY';
+            }
+          }, 200);
+
+        }, 180); // 抬起后停留 180ms，确保看清纸上的图章再飞走
+
+      }, 130); // 盖下后停顿 130ms
+    }
+
+    // 绑定点击事件到印章与纸堆热区
+    stampRig.addEventListener('pointerdown', triggerStampCycle);
+    paperStack.addEventListener('pointerdown', triggerStampCycle);
+  </script>
+</body>
+</html>

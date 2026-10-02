@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>p5.js Attraction Particles</title>
+  
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.js"></script>
+  
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden; /* Prevent scrollbars */
+      background-color: #000;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+    }
+    canvas {
+      display: block; /* Remove default inline padding */
+    }
+  </style>
+</head>
+<body>
+
+  <script>
+    // Global variables as provided
+    let particles = [];
+    let attractors = [];
+    let nParticles = 1000;
+    let img;
+
+    function preload() {
+      // Using a placeholder image since we don't have hilma.jpg
+      // This is a random abstract image from unsplash that fits the aesthetic
+      img = loadImage("https://images.unsplash.com/photo-1541701494587-cb58502866ab?q=80&w=800&auto=format&fit=crop");
+    }
+
+    function setup() {
+      // Create initial canvas to fill window
+      createCanvas(windowWidth, windowHeight);
+      
+      // Resize the image to fit the screen while maintaining aspect ratio
+      if(width > height){
+        img.resize(0, height);
+      } else {
+        img.resize(width, 0);
+      }
+      
+      // Resize canvas to exactly match the image size
+      resizeCanvas(img.width, img.height);
+      
+      // Initial background is black
+      background(0);
+      
+      // Initialize particles
+      for(let i = 0; i < nParticles; i++){
+        particles[i] = new Particle();
+      }
+    }
+
+    function draw() {
+      // Base stroke weight on number of attractors as per original code
+      strokeWeight(attractors.length * 2);
+      
+      // Update and display all particles
+      for(let i = 0; i < particles.length; i++){
+        particles[i].update();
+        particles[i].show();
+      }
+      
+      // Update attractors and remove dead ones
+      for(let i = attractors.length - 1; i >= 0; i--){
+        attractors[i].lifeTime--;
+        
+        if(attractors[i].lifeTime <= 0){
+          attractors.splice(i, 1);
+        }
+      }
+    }
+
+    function mousePressed(){
+      // Add a new attractor at the mouse position
+      // Ensure we only add attractors inside the canvas bounds
+      if(mouseX >= 0 && mouseX <= width && mouseY >= 0 && mouseY <= height) {
+        attractors.push(new Attractor(mouseX, mouseY));
+      }
+    }
+    
+    function windowResized() {
+        // Optional: Handle window resize if needed.
+        // For this sketch, since the canvas is tied to image size,
+        // we might not want to resize dynamically unless we reload the image.
+        // Leaving this empty preserves the original logic.
+    }
+
+    class Particle {
+      constructor() {
+        // Start particles at random positions on the canvas
+        this.pos = createVector(random(width), random(height));
+        this.prevPos = this.pos.copy();
+        this.vel = createVector(0, 0);
+        this.acc = createVector(0, 0);
+        // INCREASED: Allow particles to move twice as fast
+        this.maxSpeed = 10; 
+      }
+
+      update() {
+        this.acc.mult(0); // Reset acceleration each frame
+        
+        // Calculate attraction to all active attractors
+        for (let i = 0; i < attractors.length; i++) {
+          let attractor = attractors[i];
+          let force = p5.Vector.sub(attractor.pos, this.pos);
+          let dSquared = force.magSq(); // Use magnitude squared for performance
+          
+          // WIDENED: Allow forces to act over a larger distance range
+          // The lower bound prevents infinity/teleporting, the upper bound ensures they keep feeling the pull
+          dSquared = constrain(dSquared, 100, 25000);
+          
+          let strength = attractor.strength / dSquared;
+          force.setMag(strength);
+          
+          this.acc.add(force);
+        }
+
+        // Add some random wandering behavior if there are no attractors
+        if (attractors.length === 0) {
+           this.acc = p5.Vector.random2D().mult(0.1);
+        }
+
+        this.vel.add(this.acc);
+        this.vel.limit(this.maxSpeed);
+        
+        // Store previous position before moving
+        this.prevPos = this.pos.copy();
+        this.pos.add(this.vel);
+
+        // Handle edges (wrap around)
+        this.edges();
+      }
+
+      edges() {
+        let hitEdge = false;
+        if (this.pos.x > width) {
+          this.pos.x = 0;
+          hitEdge = true;
+        } else if (this.pos.x < 0) {
+          this.pos.x = width;
+          hitEdge = true;
+        }
+        
+        if (this.pos.y > height) {
+          this.pos.y = 0;
+          hitEdge = true;
+        } else if (this.pos.y < 0) {
+          this.pos.y = height;
+          hitEdge = true;
+        }
+
+        // If it wrapped around, update prevPos to avoid drawing a line across the screen
+        if (hitEdge) {
+            this.prevPos = this.pos.copy();
+        }
+      }
+
+      show() {
+        // Get the color from the underlying image at the particle's current position
+        let px = floor(this.pos.x);
+        let py = floor(this.pos.y);
+        
+        // Ensure coordinates are within image bounds before sampling
+        if (px >= 0 && px < img.width && py >= 0 && py < img.height) {
+            let col = img.get(px, py);
+            
+            // Draw a line from previous position to current position
+            // with low opacity to create trails
+            stroke(col[0], col[1], col[2], 50);
+            
+            // Override stroke weight slightly based on velocity for effect
+            // or rely on the global strokeWeight set in draw()
+            let dynamicWeight = map(this.vel.mag(), 0, this.maxSpeed, 1, attractors.length * 2 + 1);
+            strokeWeight(attractors.length > 0 ? attractors.length * 2 : 1);
+            
+            line(this.pos.x, this.pos.y, this.prevPos.x, this.prevPos.y);
+        }
+      }
+    }
+
+    class Attractor {
+      constructor(x, y) {
+        this.pos = createVector(x, y);
+        // SHORTENED: Attractors disappear a bit faster for snappier interaction
+        this.lifeTime = 120; 
+        // INCREASED: Massive boost to the gravitational pull
+        this.strength = 15000; 
+      }
+      
+      // Optional: visualize the attractor if uncommented in draw()
+      show() {
+          noFill();
+          stroke(255, 100);
+          strokeWeight(1);
+          ellipse(this.pos.x, this.pos.y, 20);
+      }
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,697 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>放克大踏步控制器 - FUNKY WALK CONTROLLER</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+    }
+
+    body, html {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #f7ce27; /* 原图亮黄底色 */
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* 舞台主容器：全屏自适应，内部 SVG 居中 */
+    #stage-container {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    svg#scene {
+      width: 100%;
+      height: 100%;
+      max-width: 100vw;
+      max-height: 100vh;
+      display: block;
+      touch-action: none;
+    }
+
+    /* 交互滑块与复选框手势 */
+    .slider-knob, .checkbox-hit {
+      cursor: grab;
+      touch-action: none;
+    }
+
+    .slider-knob:active {
+      cursor: grabbing;
+    }
+
+    /* 音频开关胶囊 */
+    .audio-badge {
+      position: absolute;
+      top: 20px;
+      left: 24px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(255, 255, 255, 0.7);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border: 1.5px solid rgba(255, 255, 255, 0.9);
+      border-radius: 30px;
+      padding: 8px 16px;
+      font-size: 12px;
+      font-weight: 800;
+      color: #383a3f;
+      cursor: pointer;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+      z-index: 20;
+      transition: all 0.2s ease;
+    }
+
+    .audio-badge:active {
+      transform: scale(0.96);
+    }
+
+    .audio-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #4bb88e;
+      box-shadow: 0 0 8px #4bb88e;
+    }
+
+    .audio-badge.muted .audio-dot {
+      background: #ea5e6b;
+      box-shadow: none;
+    }
+
+    /* 底部极简状态指示牌 */
+    .prototype-hud {
+      position: absolute;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(255, 255, 255, 0.7);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border-radius: 20px;
+      padding: 8px 22px;
+      color: #383a3f;
+      font-size: 12px;
+      font-weight: 800;
+      pointer-events: none;
+      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.06);
+      white-space: nowrap;
+      z-index: 10;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 音效开关 -->
+  <button class="audio-badge" id="audio-btn">
+    <span class="audio-dot" id="audio-dot"></span>
+    <span id="audio-label">🔊 音效已开启</span>
+  </button>
+
+  <div id="stage-container">
+    <svg id="scene" viewBox="0 0 1000 750" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
+      <!-- 1. 亮黄色纯平背景 -->
+      <rect width="1000" height="750" fill="#f7ce27" />
+
+      <!-- ========================================================
+           2. 地面与阴影层 (脚踏实地的长阴影)
+           ======================================================== -->
+      <g id="ground-layer">
+        <!-- 地面柔和长阴影胶囊条 (地面线定在 Y = 608) -->
+        <rect id="floor-shadow" x="160" y="605" width="370" height="24" rx="12" ry="12" fill="#d8ab14" opacity="0.9" />
+      </g>
+
+      <!-- ========================================================
+           3. 行走人物层 (参数化骨骼逆运动学 Walking Rig)
+           ======================================================== -->
+      <g id="character-rig">
+        <!-- 3.1 远侧/后方左手 (面条管手臂，摆幅反相) -->
+        <path id="arm-back" d="" fill="none" stroke="#b2715b" stroke-width="36" stroke-linecap="round" stroke-linejoin="round" />
+
+        <!-- 3.2 远侧/后方左腿与红鞋 -->
+        <g id="leg-back-group">
+          <!-- 弯曲裤管 (逆运动学自然微屈) -->
+          <path id="leg-back-line" d="" fill="none" stroke="#4b74df" stroke-width="26" stroke-linecap="round" stroke-linejoin="round" />
+          <!-- 红色鞋子 -->
+          <path id="shoe-back" d="" fill="#f2485e" />
+        </g>
+
+        <!-- 3.3 躯干身体 (纯白无袖背心 + 蓝色裤腰底座) -->
+        <g id="body-group">
+          <!-- 蓝色裤腰底座 -->
+          <path id="hips" d="M 306 366 L 368 366 C 368 385, 306 385, 306 366 Z" fill="#4b74df" />
+          <!-- 白色短上衣 -->
+          <path id="torso" d="M 312 298 L 362 298 L 368 368 L 306 368 Z" fill="#ffffff" />
+        </g>
+
+        <!-- 3.4 近侧/前方右腿与红鞋 -->
+        <g id="leg-front-group">
+          <!-- 弯曲裤管 (逆运动学自然微屈) -->
+          <path id="leg-front-line" d="" fill="none" stroke="#4b74df" stroke-width="26" stroke-linecap="round" stroke-linejoin="round" />
+          <!-- 红色鞋子 -->
+          <path id="shoe-front" d="" fill="#f2485e" />
+        </g>
+
+        <!-- 3.5 头部系统 (脖子、肤色侧脸、可缩放蓬松爆炸头、酷炫墨镜) -->
+        <g id="head-group">
+          <!-- 脖子 -->
+          <rect x="328" y="270" width="16" height="32" rx="4" fill="#b2715b" />
+
+          <!-- 招牌蓬松黑灰色爆炸头 (可由拉杆 3 自由调节发量) -->
+          <circle id="afro-hair" cx="332" cy="238" r="46" fill="#464952" />
+
+          <!-- 肤色侧脸 (带微翘鼻尖与下巴) -->
+          <path id="head-face" d="M 322 248 
+                   L 348 248 
+                   C 353 248, 355 252, 354 257 
+                   L 354 266 
+                   L 358 266 
+                   C 362 266, 362 272, 358 273 
+                   L 354 274 
+                   L 354 286 
+                   C 354 290, 348 292, 342 292 
+                   L 322 292 
+                   Z" fill="#b2715b" />
+
+          <!-- 帅气墨镜 (勾选 Cool 时从天而降佩戴) -->
+          <g id="sunglasses" opacity="0" transform="translate(0, -35)">
+            <!-- 镜片主体 -->
+            <path d="M 334 254 L 358 254 C 360 254, 361 257, 360 264 L 354 269 C 352 271, 336 271, 334 265 Z" fill="#1e2229" />
+            <!-- 镜片白色反光折角 -->
+            <polygon points="340,256 345,256 339,267 336,267" fill="#ffffff" opacity="0.8" />
+            <!-- 镜腿 -->
+            <line x1="334" y1="256" x2="324" y2="253" stroke="#1e2229" stroke-width="3" stroke-linecap="round" />
+          </g>
+        </g>
+
+        <!-- 3.6 近侧/前方右手 (面条管手臂，带顺滑拖拽曲率) -->
+        <path id="arm-front" d="" fill="none" stroke="#b2715b" stroke-width="36" stroke-linecap="round" stroke-linejoin="round" />
+      </g>
+
+      <!-- ========================================================
+           4. 右侧控制台系统 (原图纯平深石板灰 UI)
+           ======================================================== -->
+      <g id="ui-console">
+        <!-- 4.1 拉杆 1: Tempo 步伐频率速度 -->
+        <g id="slider-1-group">
+          <line x1="610" y1="230" x2="885" y2="230" stroke="#3d4047" stroke-width="8" stroke-linecap="round" />
+          <!-- 滑块手柄 (圆角正方形 #3d4047，内部带空心小孔) -->
+          <g id="slider-knob-1" class="slider-knob" transform="translate(620, 230)">
+            <rect x="-18" y="-18" width="36" height="36" rx="8" ry="8" fill="#3d4047" />
+            <rect x="-8" y="-8" width="16" height="16" rx="3" ry="3" fill="#f7ce27" />
+            <!-- 透明触控热区 -->
+            <rect x="-35" y="-35" width="70" height="70" fill="transparent" />
+          </g>
+        </g>
+
+        <!-- 4.2 拉杆 2: Swagger 摆臂与身体沉浮幅度 -->
+        <g id="slider-2-group">
+          <line x1="610" y1="330" x2="885" y2="330" stroke="#3d4047" stroke-width="8" stroke-linecap="round" />
+          <g id="slider-knob-2" class="slider-knob" transform="translate(620, 330)">
+            <rect x="-18" y="-18" width="36" height="36" rx="8" ry="8" fill="#3d4047" />
+            <rect x="-8" y="-8" width="16" height="16" rx="3" ry="3" fill="#f7ce27" />
+            <rect x="-35" y="-35" width="70" height="70" fill="transparent" />
+          </g>
+        </g>
+
+        <!-- 4.3 拉杆 3: Afro 爆炸头发量膨胀 -->
+        <g id="slider-3-group">
+          <line x1="610" y1="430" x2="885" y2="430" stroke="#3d4047" stroke-width="8" stroke-linecap="round" />
+          <g id="slider-knob-3" class="slider-knob" transform="translate(620, 430)">
+            <rect x="-18" y="-18" width="36" height="36" rx="8" ry="8" fill="#3d4047" />
+            <rect x="-8" y="-8" width="16" height="16" rx="3" ry="3" fill="#f7ce27" />
+            <rect x="-35" y="-35" width="70" height="70" fill="transparent" />
+          </g>
+        </g>
+
+        <!-- 4.4 经典复选框: Cool 模式开关 -->
+        <g id="cool-checkbox-group" class="checkbox-hit" transform="translate(600, 500)">
+          <!-- 外框方盒 -->
+          <rect id="cool-box" x="0" y="0" width="38" height="38" rx="8" ry="8" fill="none" stroke="#3d4047" stroke-width="8" />
+          <!-- 勾选内芯 -->
+          <rect id="cool-check-mark" x="9" y="9" width="20" height="20" rx="4" ry="4" fill="#3d4047" opacity="0" />
+          <!-- "Cool" 文字 -->
+          <text x="68" y="29" fill="#3d4047" font-size="36" font-weight="900" font-family="-apple-system, BlinkMacSystemFont, sans-serif" letter-spacing="1">Cool</text>
+          <!-- 触控热区 -->
+          <rect x="-10" y="-10" width="220" height="58" fill="transparent" />
+        </g>
+      </g>
+    </svg>
+
+    <!-- 底部状态指示牌 -->
+    <div class="prototype-hud" id="prototype-hud">
+      拖拽右侧 3 根拉杆调节速度、步幅与发量 // 勾选 Cool 开启墨镜放克节拍
+    </div>
+  </div>
+
+  <script>
+    class FunkyAudioEngine {
+      constructor() {
+        this.ctx = null;
+        this.muted = false;
+        this.bassLoopTimer = null;
+        this.bassStep = 0;
+        this.bassNotes = [110, 110, 130.8, 146.8, 164.8, 146.8, 130.8, 123.5]; // A2 放克贝斯小调五声音阶
+      }
+
+      init() {
+        if (!this.ctx) {
+          const AudioContext = window.AudioContext || window.webkitAudioContext;
+          this.ctx = new AudioContext();
+        }
+        if (this.ctx.state === 'suspended') {
+          this.ctx.resume();
+        }
+      }
+
+      toggleMute() {
+        this.muted = !this.muted;
+        return this.muted;
+      }
+
+      // 脚步踩地轻微顿感
+      playFootstep() {
+        if (this.muted || !this.ctx) return;
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(140, now);
+        osc.frequency.exponentialRampToValueAtTime(45, now + 0.06);
+
+        gain.gain.setValueAtTime(0.12, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.07);
+
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.08);
+      }
+
+      // 戴上墨镜时的闪亮叮音
+      playSunglassesDing() {
+        if (this.muted || !this.ctx) return;
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(987.77, now); // B5
+        osc.frequency.setValueAtTime(1318.51, now + 0.06); // E6
+
+        gain.gain.setValueAtTime(0.001, now);
+        gain.gain.linearRampToValueAtTime(0.2, now + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
+
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.46);
+      }
+
+      // Cool 模式下的持续放克节拍
+      startFunkyLoop(bpm = 115) {
+        if (this.bassLoopTimer) return;
+        const interval = (60 / bpm) * 1000 * 0.5;
+
+        this.bassLoopTimer = setInterval(() => {
+          if (this.muted || !this.ctx) return;
+          const now = this.ctx.currentTime;
+          const freq = this.bassNotes[this.bassStep % this.bassNotes.length];
+          this.bassStep++;
+
+          // 贝斯合成器
+          const osc = this.ctx.createOscillator();
+          const filter = this.ctx.createBiquadFilter();
+          const gain = this.ctx.createGain();
+
+          osc.type = 'sawtooth';
+          osc.frequency.setValueAtTime(freq, now);
+
+          filter.type = 'lowpass';
+          filter.frequency.setValueAtTime(800, now);
+          filter.frequency.exponentialRampToValueAtTime(220, now + 0.18);
+
+          gain.gain.setValueAtTime(0.18, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+
+          osc.connect(filter);
+          filter.connect(gain);
+          gain.connect(this.ctx.destination);
+
+          osc.start(now);
+          osc.stop(now + 0.22);
+        }, interval);
+      }
+
+      stopFunkyLoop() {
+        if (this.bassLoopTimer) {
+          clearInterval(this.bassLoopTimer);
+          this.bassLoopTimer = null;
+        }
+      }
+    }
+
+    const sound = new FunkyAudioEngine();
+
+    // 交互解锁声音环境
+    window.addEventListener('pointerdown', () => sound.init(), { once: true });
+
+    // 音频开关
+    const audioBtn = document.getElementById('audio-btn');
+    const audioLabel = document.getElementById('audio-label');
+    audioBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      sound.init();
+      const muted = sound.toggleMute();
+      if (muted) {
+        audioBtn.classList.add('muted');
+        audioLabel.textContent = '🔇 音效已静音';
+        sound.stopFunkyLoop();
+      } else {
+        audioBtn.classList.remove('muted');
+        audioLabel.textContent = '🔊 音效已开启';
+        if (state.isCool) sound.startFunkyLoop();
+      }
+    });
+
+    const svgScene = document.getElementById('scene');
+    const bodyGroup = document.getElementById('body-group');
+    const headGroup = document.getElementById('head-group');
+    const afroHair = document.getElementById('afro-hair');
+    const sunglasses = document.getElementById('sunglasses');
+    const armFront = document.getElementById('arm-front');
+    const armBack = document.getElementById('arm-back');
+    const legFrontLine = document.getElementById('leg-front-line');
+    const legBackLine = document.getElementById('leg-back-line');
+    const shoeFront = document.getElementById('shoe-front');
+    const shoeBack = document.getElementById('shoe-back');
+    const floorShadow = document.getElementById('floor-shadow');
+
+    // UI 控制元素
+    const sliderKnob1 = document.getElementById('slider-knob-1');
+    const sliderKnob2 = document.getElementById('slider-knob-2');
+    const sliderKnob3 = document.getElementById('slider-knob-3');
+    const coolCheckMark = document.getElementById('cool-check-mark');
+    const coolCheckboxGroup = document.getElementById('cool-checkbox-group');
+    const prototypeHud = document.getElementById('prototype-hud');
+
+    // 控制台物理约束
+    const SLIDER_X_MIN = 610;
+    const SLIDER_X_MAX = 885;
+    const SLIDER_SPAN = SLIDER_X_MAX - SLIDER_X_MIN;
+
+    // 全局状态机
+    const state = {
+      speedRate: 0.35,     // 步频 (0 ~ 1)
+      swaggerAmount: 0.45, // 摆臂律动 (0 ~ 1)
+      afroScale: 0.15,     // 爆炸头发量 (0 ~ 1)
+      isCool: false        // 是否开启墨镜放克模式
+    };
+
+    // 屏幕坐标转 SVG 内部标准坐标
+    function clientToSvg(clientX, clientY) {
+      const pt = svgScene.createSVGPoint();
+      pt.x = clientX;
+      pt.y = clientY;
+      const ctm = svgScene.getScreenCTM();
+      if (!ctm) return { x: clientX, y: clientY };
+      return pt.matrixTransform(ctm.inverse());
+    }
+
+    let walkPhase = 0;
+    let lastStepCycle = 0;
+
+    // 人体骨骼参考基准 (严格锁死地面高度在 Y = 608)
+    const BASE_HIP_X = 337;
+    const BASE_HIP_Y = 382;
+    const GROUND_Y = 608;
+
+    function renderWalkingRig() {
+      // 1. 步频计算 (基础 0.024，随拉杆 1 增加至 0.088)
+      const walkSpeed = 0.022 + state.speedRate * 0.066;
+      walkPhase += walkSpeed;
+
+      // 踩地声效节奏触发
+      const currentCycle = Math.floor(walkPhase / Math.PI);
+      if (currentCycle !== lastStepCycle) {
+        lastStepCycle = currentCycle;
+        sound.playFootstep();
+      }
+
+      // 2. 躯干与骨盆柔和连续律动 (平滑正弦沉浮，彻底消除生硬折角)
+      const bounceIntensity = 4 + state.swaggerAmount * 9;
+      const hipBob = Math.sin(walkPhase * 2 - Math.PI * 0.5) * bounceIntensity;
+
+      // 躯干倾角随步态节拍产生自然的呼吸摇摆 (开启 Cool 模式后身体后仰)
+      const baseLean = state.isCool ? -10 - state.swaggerAmount * 6 : -2.5 - state.swaggerAmount * 3;
+      const torsoSway = Math.sin(walkPhase) * (2.5 + state.swaggerAmount * 5.5);
+      const currentLean = baseLean + torsoSway;
+
+      // 骨盆位置
+      const currentHipX = BASE_HIP_X + Math.sin(walkPhase) * (3 + state.swaggerAmount * 6);
+      const currentHipY = BASE_HIP_Y + hipBob;
+
+      bodyGroup.setAttribute('transform', `rotate(${currentLean}, ${BASE_HIP_X}, ${BASE_HIP_Y}) translate(0, ${hipBob})`);
+
+      // 3. 头部带有惯性延迟的跟随弹性点头
+      const headNod = baseLean * 0.65 - Math.sin(walkPhase - 0.4) * (3.5 + state.swaggerAmount * 6);
+      headGroup.setAttribute('transform', `rotate(${headNod}, 334, 275) translate(0, ${hipBob * 0.75})`);
+
+      // 4. 爆炸头大小与动态呼吸 (拉杆 3 控制)
+      const currentAfroRadius = 46 + state.afroScale * 48;
+      afroHair.setAttribute('r', currentAfroRadius);
+      const squashX = 1 + Math.sin(walkPhase * 2) * (0.015 + state.afroScale * 0.035);
+      const squashY = 1 - Math.sin(walkPhase * 2) * (0.015 + state.afroScale * 0.035);
+      afroHair.setAttribute('transform', `scale(${squashX}, ${squashY})`);
+      afroHair.style.transformOrigin = "332px 238px";
+
+      // 5. 跨步宽度与抬腿高度 (拉杆 2 控制)
+      const stride = 58 + state.swaggerAmount * 72;
+      const liftHeight = 26 + state.swaggerAmount * 38;
+
+      // 前腿与后腿运动学相位
+      const frontPhase = walkPhase % (Math.PI * 2);
+      const backPhase = (walkPhase + Math.PI) % (Math.PI * 2);
+
+      const frontPose = computeFootKinematics(frontPhase, currentHipX, currentHipY, stride, liftHeight);
+      const backPose = computeFootKinematics(backPhase, currentHipX - 8, currentHipY, stride, liftHeight);
+
+      // 绘制自然微屈裤管与着地红鞋
+      updateLegAndShoe(legFrontLine, shoeFront, currentHipX + 6, currentHipY, frontPose);
+      updateLegAndShoe(legBackLine, shoeBack, currentHipX - 8, currentHipY, backPose);
+
+      // 6. 通心粉面条手臂流体甩动 (手肘先导，手掌带惯性滞后)
+      const shoulderX = 338;
+      const shoulderY = 320 + hipBob;
+
+      updateFluidArm(armFront, shoulderX, shoulderY, walkPhase + Math.PI, true);
+      updateFluidArm(armBack, shoulderX - 10, shoulderY, walkPhase, false);
+
+      // 7. 地面长阴影自适应包裹双脚
+      const minFootX = Math.min(frontPose.x, backPose.x) - 40;
+      const maxFootX = Math.max(frontPose.x, backPose.x) + 45;
+      const shadowW = Math.max(260, maxFootX - minFootX);
+      const shadowX = (minFootX + maxFootX) * 0.5 - shadowW * 0.5;
+      floorShadow.setAttribute('x', shadowX);
+      floorShadow.setAttribute('width', shadowW);
+
+      requestAnimationFrame(renderWalkingRig);
+    }
+
+    function computeFootKinematics(phase, hipX, hipY, stride, liftHeight) {
+      let footX, footY, shoeAngle;
+
+      if (phase < Math.PI) {
+        // [支撑期 Stance Phase]：鞋底稳稳平贴在地面线 GROUND_Y = 608！
+        const p = phase / Math.PI; // 0 (前接触脚跟) -> 1 (后推蹬脚尖)
+
+        // 支撑脚向后平稳划移，与地面绝对贴合
+        footX = hipX + stride * (1 - 2 * p);
+        footY = GROUND_Y;
+
+        if (p < 0.2) {
+          // 脚跟着地 (Heel strike)
+          const roll = (1 - p / 0.2);
+          shoeAngle = 0.28 * roll;
+        } else if (p < 0.65) {
+          // 脚掌完全踩平地面 (Flat on ground)
+          shoeAngle = 0;
+        } else {
+          // 脚跟抬起准备推蹬 (Toe off)
+          const push = (p - 0.65) / 0.35;
+          shoeAngle = -0.55 * push;
+        }
+      } else {
+        // [摆动期 Swing Phase]：脚抬离地面向前划出平滑抛物线
+        const p = (phase - Math.PI) / Math.PI; // 0 -> 1
+        const smoothP = 0.5 - 0.5 * Math.cos(p * Math.PI); // 余弦平滑缓动
+
+        footX = hipX - stride + 2 * stride * smoothP;
+        // 向上抬起弧线
+        const arc = Math.sin(p * Math.PI);
+        footY = GROUND_Y - liftHeight * arc;
+
+        // 脚尖下垂过渡
+        if (p < 0.5) {
+          shoeAngle = -0.42 * (1 - p * 2);
+        } else {
+          shoeAngle = 0.26 * ((p - 0.5) * 2);
+        }
+      }
+
+      return { x: footX, y: footY, angle: shoeAngle };
+    }
+
+    function updateLegAndShoe(legPath, shoePath, hipX, hipY, pose) {
+      const footX = pose.x;
+      const footY = pose.y;
+
+      // 逆运动学膝关节计算：自然向前微屈
+      const midX = (hipX + footX) * 0.5;
+      const midY = (hipY + footY) * 0.5;
+      const dist = Math.hypot(footX - hipX, footY - hipY);
+      const legMaxLen = 230;
+
+      // 腿收缩越厉害，膝盖向右前方弯曲幅度越大，杜绝死板折角
+      const flexAmount = Math.max(8, (legMaxLen - dist) * 0.45 + 10);
+      const kneeX = midX + flexAmount;
+      const kneeY = midY - 6;
+
+      legPath.setAttribute('d', `M ${hipX} ${hipY} Q ${kneeX} ${kneeY} ${footX} ${footY}`);
+
+      // 绘制贴地红鞋
+      const shoeTilt = pose.angle;
+      const cos = Math.cos(shoeTilt);
+      const sin = Math.sin(shoeTilt);
+
+      // 鞋尖向右前方伸展
+      const tipX = footX + 44 * cos;
+      const tipY = footY + 44 * sin;
+      const heelX = footX - 16 * cos;
+      const heelY = footY - 16 * sin;
+      const topX = footX + 8 * cos - 17 * sin;
+      const topY = footY + 8 * sin + 17 * cos;
+
+      const d = `M ${heelX} ${heelY} 
+                 Q ${footX} ${footY + 4} ${tipX} ${tipY} 
+                 C ${tipX - 6} ${tipY - 16}, ${topX + 14} ${topY - 6}, ${topX} ${topY} 
+                 Z`;
+      shoePath.setAttribute('d', d);
+    }
+
+    function updateFluidArm(armPath, sx, sy, phase, isFront) {
+      const swingAngle = Math.sin(phase) * (0.42 + state.swaggerAmount * 0.48);
+      // 手肘带动，手掌产生半个节拍的惯性滞后
+      const handLagPhase = phase - 0.45;
+      const lagAngle = Math.sin(handLagPhase) * (0.55 + state.swaggerAmount * 0.52);
+
+      const armLen = 115;
+      const handX = sx + Math.sin(lagAngle) * armLen + (isFront ? 32 : -28);
+      const handY = sy + Math.cos(lagAngle) * 58 + 22;
+
+      // 控制点外拱，形成原画经典的圆润通心粉弧线
+      const ctrlX = sx + Math.sin(swingAngle) * 72 + (isFront ? (swingAngle < 0 ? -55 : 45) : (swingAngle < 0 ? -38 : 52));
+      const ctrlY = sy + 58 + Math.cos(swingAngle) * 26;
+
+      armPath.setAttribute('d', `M ${sx} ${sy} Q ${ctrlX} ${ctrlY} ${handX} ${handY}`);
+    }
+
+    let currentDragging = null; // 'slider1' | 'slider2' | 'slider3' | null
+
+    function setupSliderInteraction(knobEl, keyName) {
+      knobEl.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        sound.init();
+        currentDragging = keyName;
+      });
+    }
+
+    setupSliderInteraction(sliderKnob1, 'slider1');
+    setupSliderInteraction(sliderKnob2, 'slider2');
+    setupSliderInteraction(sliderKnob3, 'slider3');
+
+    window.addEventListener('pointermove', (e) => {
+      if (!currentDragging) return;
+      const svgPt = clientToSvg(e.clientX, e.clientY);
+      const clampedX = Math.max(SLIDER_X_MIN, Math.min(SLIDER_X_MAX, svgPt.x));
+      const ratio = (clampedX - SLIDER_X_MIN) / SLIDER_SPAN;
+
+      if (currentDragging === 'slider1') {
+        state.speedRate = ratio;
+        sliderKnob1.setAttribute('transform', `translate(${clampedX}, 230)`);
+      } else if (currentDragging === 'slider2') {
+        state.swaggerAmount = ratio;
+        sliderKnob2.setAttribute('transform', `translate(${clampedX}, 330)`);
+      } else if (currentDragging === 'slider3') {
+        state.afroScale = ratio;
+        sliderKnob3.setAttribute('transform', `translate(${clampedX}, 430)`);
+      }
+    });
+
+    window.addEventListener('pointerup', () => {
+      currentDragging = null;
+    });
+
+    // 勾选 Cool 模式
+    coolCheckboxGroup.addEventListener('click', (e) => {
+      e.stopPropagation();
+      sound.init();
+      state.isCool = !state.isCool;
+
+      if (state.isCool) {
+        // 激活 Cool 模式
+        coolCheckMark.setAttribute('opacity', '1');
+        sunglasses.style.transition = 'transform 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.2), opacity 0.2s ease';
+        sunglasses.style.transform = 'translate(0, 0)';
+        sunglasses.setAttribute('opacity', '1');
+
+        sound.playSunglassesDing();
+        sound.startFunkyLoop();
+        prototypeHud.textContent = '★ COOL 模式已开启！戴上复古墨镜，迈出超拽放克步态 ★';
+      } else {
+        // 关闭 Cool 模式
+        coolCheckMark.setAttribute('opacity', '0');
+        sunglasses.style.transform = 'translate(0, -35px)';
+        sunglasses.setAttribute('opacity', '0');
+
+        sound.stopFunkyLoop();
+        prototypeHud.textContent = '拖拽右侧 3 根拉杆调节速度、步幅与发量 // 勾选 Cool 开启墨镜放克节拍';
+      }
+    });
+
+    // 初始化控件滑块位置
+    function syncKnobs() {
+      const x1 = SLIDER_X_MIN + state.speedRate * SLIDER_SPAN;
+      const x2 = SLIDER_X_MIN + state.swaggerAmount * SLIDER_SPAN;
+      const x3 = SLIDER_X_MIN + state.afroScale * SLIDER_SPAN;
+      sliderKnob1.setAttribute('transform', `translate(${x1}, 230)`);
+      sliderKnob2.setAttribute('transform', `translate(${x2}, 330)`);
+      sliderKnob3.setAttribute('transform', `translate(${x3}, 430)`);
+    }
+
+    syncKnobs();
+
+    // 启动动画循环
+    requestAnimationFrame(renderWalkingRig);
+  </script>
+</body>
+</html>

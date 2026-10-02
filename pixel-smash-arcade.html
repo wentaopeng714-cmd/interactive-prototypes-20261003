@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pixel Smash Arcade</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #0f111a;
+            overflow: hidden;
+            font-family: 'Inter', sans-serif;
+            touch-action: none;
+            user-select: none;
+        }
+        #ui-container {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            pointer-events: none;
+            color: #fff;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+            z-index: 10;
+        }
+        h1 {
+            margin: 0;
+            font-size: 28px;
+            font-weight: 900;
+            letter-spacing: -1px;
+            background: linear-gradient(90deg, #ff007f, #00f0ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        p {
+            margin: 5px 0 0 0;
+            font-size: 14px;
+            color: #a0aabf;
+        }
+        .badges {
+            margin-top: 12px;
+            display: flex;
+            gap: 8px;
+        }
+        .badge {
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-weight: bold;
+            font-size: 11px;
+            text-transform: uppercase;
+        }
+        .b-normal { background: rgba(255,255,255,0.1); color: #fff; }
+        .b-tnt { background: rgba(255, 50, 50, 0.2); color: #ff5555; border: 1px solid #ff5555; }
+        .b-gold { background: rgba(255, 200, 0, 0.2); color: #ffd700; border: 1px solid #ffd700; }
+        
+        #combo-ui {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            text-align: right;
+            pointer-events: none;
+        }
+        #combo-text {
+            font-size: 36px;
+            font-weight: 900;
+            color: #fff;
+            font-style: italic;
+            transition: transform 0.1s;
+        }
+        .combo-active { transform: scale(1.2); color: #ff007f !important; }
+    </style>
+</head>
+<body>
+
+    <div id="ui-container">
+        <h1>SMASH ARCADE</h1>
+        <p>狂暴解压版 · 滑动鼠标疯狂掉落</p>
+        <div class="badges">
+            <div class="badge b-normal">普通</div>
+            <div class="badge b-tnt">🧨 TNT炸弹</div>
+            <div class="badge b-gold">👑 黄金圣杯</div>
+        </div>
+    </div>
+    
+    <div id="combo-ui">
+        <div id="combo-text"></div>
+    </div>
+
+    <script>
+        let items = [];
+        let particles = [];
+        let floatTexts = [];
+        let itemGraphics = {};
+        
+        const MAX_PARTICLES = 1500;
+        let lastSpawnTime = 0;
+        let floorY;
+        
+        // 游戏打击感变量
+        let shakeIntensity = 0;
+        let comboCount = 0;
+        let comboTimer = 0;
+
+        // 霓虹调色板
+        const neonColors = ['#FF0055', '#00FFFF', '#FFDD00', '#00FF66', '#B700FF'];
+
+        // 像素模板定义 (0:透明, 1:主色, 2:阴影, 3:高光)
+        const templates = {
+            vase: [
+                "   11   ",
+                "  2112  ",
+                "  2112  ",
+                " 211112 ",
+                " 211112 ",
+                " 311113 ",
+                "  3333  "
+            ],
+            tnt: [
+                "  1111  ",
+                "  3333  ",
+                " 211112 ",
+                " 213312 ",
+                " 213312 ",
+                " 211112 ",
+                "  2222  "
+            ],
+            chalice: [
+                "33333333",
+                " 111111 ",
+                "  1111  ",
+                "   11   ",
+                "   22   ",
+                "  3333  ",
+                " 311113 "
+            ]
+        };
+
+        // --- STREAMING_CHUNK:Setting up p5 and pre-rendering pixel art ---
+        function setup() {
+            createCanvas(windowWidth, windowHeight);
+            floorY = height - 40;
+            
+            // 预渲染三种不同类型的掉落物
+            itemGraphics.normal = [];
+            let normalPalettes = [
+                { base: '#78909c', shadow: '#546e7a', dark: '#37474f' },
+                { base: '#9575cd', shadow: '#7e57c2', dark: '#512da8' }
+            ];
+            for (let p of normalPalettes) {
+                itemGraphics.normal.push(createPixelGraphic(templates.vase, p, 10));
+            }
+
+            itemGraphics.tnt = [createPixelGraphic(templates.tnt, 
+                { base: '#ff3333', shadow: '#cc0000', dark: '#ffffff' }, 12)];
+                
+            itemGraphics.gold = [createPixelGraphic(templates.chalice, 
+                { base: '#ffd700', shadow: '#ffaa00', dark: '#fff8a8' }, 12)];
+        }
+
+        function createPixelGraphic(template, palette, pixelSize) {
+            let cols = template[0].length;
+            let rows = template.length;
+            let pg = createGraphics(cols * pixelSize, rows * pixelSize);
+            pg.noStroke();
+            
+            for (let y = 0; y < rows; y++) {
+                for (let x = 0; x < cols; x++) {
+                    let char = template[y][x];
+                    if (char === '1') pg.fill(palette.base);
+                    else if (char === '2') pg.fill(palette.shadow);
+                    else if (char === '3') pg.fill(palette.dark);
+                    else continue;
+                    pg.rect(x * pixelSize, y * pixelSize, pixelSize, pixelSize);
+                }
+            }
+            return pg;
+        }
+
+        // --- STREAMING_CHUNK:Main draw loop and screen shake mechanics ---
+        function draw() {
+            // 半透明背景，制造拖尾残影效果 (Motion Blur)
+            background(15, 17, 26, 80);
+
+            // 连击计时器衰减
+            if (comboTimer > 0) {
+                comboTimer -= deltaTime;
+                if (comboTimer <= 0) {
+                    comboCount = 0; // 连击断掉
+                    updateComboUI();
+                }
+            }
+
+            // 处理屏幕震动 (Screen Shake)
+            push();
+            if (shakeIntensity > 0) {
+                translate(random(-shakeIntensity, shakeIntensity), random(-shakeIntensity, shakeIntensity));
+                shakeIntensity *= 0.85; // 震动衰减
+                if (shakeIntensity < 0.5) shakeIntensity = 0;
+            }
+
+            // 绘制科幻感地平线
+            stroke(40, 50, 70); strokeWeight(2);
+            line(0, floorY, width, floorY);
+            stroke(0, 255, 255, 50); strokeWeight(1);
+            line(0, floorY + 4, width, floorY + 4);
+
+            // 开启叠加混合模式，让粒子发光
+            blendMode(ADD);
+
+            // --- STREAMING_CHUNK:Updating physics for particles and items ---
+            for (let i = particles.length - 1; i >= 0; i--) {
+                particles[i].update();
+                particles[i].show();
+                if (particles[i].life <= 0 || particles[i].y > height + 50) {
+                    particles.splice(i, 1);
+                }
+            }
+
+            blendMode(BLEND); // 恢复正常混合模式绘制罐子和文字
+
+            for (let i = items.length - 1; i >= 0; i--) {
+                items[i].update();
+                items[i].show();
+                
+                // 落地碰撞检测
+                if (items[i].y > floorY - items[i].h / 2) {
+                    explodeItem(items[i]);
+                    items.splice(i, 1);
+                }
+            }
+
+            // 绘制漂浮文字
+            for (let i = floatTexts.length - 1; i >= 0; i--) {
+                floatTexts[i].update();
+                floatTexts[i].show();
+                if (floatTexts[i].life <= 0) floatTexts.splice(i, 1);
+            }
+            pop(); // 结束震动矩阵
+
+            // 性能保护：防止粒子过多
+            while (particles.length > MAX_PARTICLES) particles.shift();
+        }
+
+        // --- STREAMING_CHUNK:User interactions and spawning logic ---
+        function mouseDragged() { trySpawnItem(); }
+        function mouseMoved() { trySpawnItem(); }
+        function touchMoved() { trySpawnItem(); return false; }
+
+        function trySpawnItem() {
+            // 控制生成频率
+            if (frameCount - lastSpawnTime > 5 && dist(mouseX, mouseY, pmouseX, pmouseY) > 5) {
+                let r = random(1);
+                let type = 'normal';
+                if (r < 0.1) type = 'tnt';
+                else if (r < 0.2) type = 'gold';
+                
+                items.push(new DropItem(mouseX + random(-15, 15), mouseY + random(-15, 15), type));
+                lastSpawnTime = frameCount;
+            }
+        }
+
+        class DropItem {
+            constructor(x, y, type) {
+                this.x = x; this.y = y;
+                this.vx = (mouseX - pmouseX) * 0.15; // 继承更多鼠标动能
+                this.vy = random(0, 3);
+                this.gravity = 0.6;
+                this.type = type;
+                
+                let imgArr = itemGraphics[this.type];
+                this.img = random(imgArr);
+                this.w = this.img.width; this.h = this.img.height;
+                
+                this.angle = random(TWO_PI);
+                this.spin = random(-0.15, 0.15);
+            }
+            update() {
+                this.vy += this.gravity;
+                this.x += this.vx; this.y += this.vy;
+                this.angle += this.spin;
+            }
+            show() {
+                push();
+                translate(this.x, this.y); rotate(this.angle);
+                imageMode(CENTER);
+                
+                // 给特殊物品加上发光描边效果
+                if (this.type === 'tnt') {
+                    drawingContext.shadowBlur = 20;
+                    drawingContext.shadowColor = '#ff0000';
+                } else if (this.type === 'gold') {
+                    drawingContext.shadowBlur = 20;
+                    drawingContext.shadowColor = '#ffdd00';
+                }
+                
+                image(this.img, 0, 0);
+                pop();
+            }
+        }
+
+        // --- STREAMING_CHUNK:Explosion and shockwave mechanics ---
+        function explodeItem(item) {
+            // 增加连击
+            comboCount++;
+            comboTimer = 2000; // 2秒内不断连
+            updateComboUI();
+            
+            // 生成漂浮分数
+            let score = item.type === 'normal' ? 10 : (item.type === 'tnt' ? 50 : 100);
+            score *= (1 + Math.floor(comboCount/10)); // 连击加成
+            floatTexts.push(new FloatingText("+" + score, item.x, floorY, item.type));
+
+            if (item.type === 'normal') {
+                shakeIntensity = max(shakeIntensity, 3);
+                spawnParticles(item.x, floorY, 15, 'neon');
+            } 
+            else if (item.type === 'tnt') {
+                // TNT大爆炸：剧烈震屏 + 冲击波
+                shakeIntensity = max(shakeIntensity, 25);
+                spawnParticles(item.x, floorY, 40, 'fire');
+                
+                // 冲击波：炸飞周围已静止的粒子 (核心解压点!)
+                for (let p of particles) {
+                    let d = dist(item.x, floorY, p.x, p.y);
+                    if (d < 250) {
+                        let force = map(d, 0, 250, 25, 2); // 距离越近力越大
+                        let ang = atan2(p.y - floorY, p.x - item.x);
+                        // 强制给一个向上的力
+                        p.vx += cos(ang) * force;
+                        p.vy += sin(ang) * force - force*0.5; 
+                        p.isResting = false; // 唤醒粒子
+                    }
+                }
+                floatTexts.push(new FloatingText("BOOM!", item.x, floorY - 40, 'tnt', 30));
+            } 
+            else if (item.type === 'gold') {
+                // 黄金大爆：星星碎片
+                shakeIntensity = max(shakeIntensity, 10);
+                spawnParticles(item.x, floorY, 60, 'star');
+                floatTexts.push(new FloatingText("JACKPOT!", item.x, floorY - 40, 'gold', 25));
+            }
+        }
+
+        function spawnParticles(x, y, count, style) {
+            for (let i = 0; i < count; i++) {
+                particles.push(new Particle(x, y, style));
+            }
+        }
+
+        function updateComboUI() {
+            let el = document.getElementById('combo-text');
+            if (comboCount > 1) {
+                el.innerText = comboCount + "x COMBO!";
+                el.classList.remove('combo-active');
+                void el.offsetWidth; // trigger reflow
+                el.classList.add('combo-active');
+                
+                // 根据连击数变色
+                if(comboCount > 20) el.style.color = '#ffdd00';
+                else if(comboCount > 10) el.style.color = '#00ffff';
+                else el.style.color = '#fff';
+            } else {
+                el.innerText = "";
+            }
+        }
+
+        // --- STREAMING_CHUNK:Particle physics and rendering ---
+        class Particle {
+            constructor(x, y, style) {
+                this.x = x + random(-10, 10);
+                this.y = y + random(-10, 5);
+                this.style = style;
+                
+                let angle = random(PI + 0.2, TWO_PI - 0.2);
+                let speed = style === 'fire' ? random(8, 25) : random(4, 15);
+                this.vx = cos(angle) * speed;
+                this.vy = sin(angle) * speed;
+                
+                this.gravity = 0.6;
+                this.bounce = random(0.4, 0.7);
+                this.friction = 0.92;
+                this.size = random(4, 15);
+                this.life = 255;
+                this.isResting = false;
+                
+                if (style === 'neon') {
+                    this.color = color(random(neonColors));
+                    this.shape = random(['rect', 'circle']);
+                } else if (style === 'fire') {
+                    this.color = color(random(['#ff2a00', '#ff7a00', '#ffcc00', '#ffffff']));
+                    this.shape = 'rect';
+                } else if (style === 'star') {
+                    this.color = color(random(['#FFD700', '#FFF8DC', '#FFA500']));
+                    this.shape = 'star';
+                }
+                
+                this.rot = random(TWO_PI);
+                this.spin = random(-0.4, 0.4);
+            }
+
+            update() {
+                if (!this.isResting) {
+                    this.vy += this.gravity;
+                    this.x += this.vx; this.y += this.vy;
+                    this.rot += this.spin;
+
+                    // 弹地逻辑
+                    if (this.y > floorY - this.size/2) {
+                        this.y = floorY - this.size/2;
+                        this.vy *= -this.bounce;
+                        this.vx *= this.friction;
+                        this.spin *= 0.8;
+
+                        if (abs(this.vy) < 1.5) {
+                            this.vy = 0;
+                            this.isResting = true;
+                            this.y += random(-3, 3); // 堆积错落感
+                        }
+                    }
+                    // 撞墙反弹
+                    if (this.x < 0 || this.x > width) this.vx *= -1;
+                }
+                
+                // 静止后慢慢消失（给新粒子腾空间）
+                if (this.isResting) {
+                    this.life -= 1.5;
+                }
+            }
+
+            show() {
+                push();
+                translate(this.x, this.y); rotate(this.rot);
+                noStroke();
+                
+                // 发光透明度
+                let c = this.color;
+                c.setAlpha(this.life);
+                fill(c);
+
+                if (this.shape === 'rect') {
+                    rectMode(CENTER);
+                    // 速度越快，拉伸越长 (Motion stretch)
+                    let stretch = this.isResting ? 1 : max(1, abs(this.vx) + abs(this.vy)) * 0.2;
+                    rect(0, 0, this.size * stretch, this.size);
+                } 
+                else if (this.shape === 'circle') {
+                    circle(0, 0, this.size);
+                }
+                else if (this.shape === 'star') {
+                    drawStar(0, 0, this.size * 0.4, this.size, 5);
+                }
+                pop();
+            }
+        }
+
+        function drawStar(x, y, radius1, radius2, npoints) {
+            let angle = TWO_PI / npoints;
+            let halfAngle = angle / 2.0;
+            beginShape();
+            for (let a = 0; a < TWO_PI; a += angle) {
+                let sx = x + cos(a) * radius2;
+                let sy = y + sin(a) * radius2;
+                vertex(sx, sy);
+                sx = x + cos(a + halfAngle) * radius1;
+                sy = y + sin(a + halfAngle) * radius1;
+                vertex(sx, sy);
+            }
+            endShape(CLOSE);
+        }
+
+        // --- STREAMING_CHUNK:Floating text UI ---
+        class FloatingText {
+            constructor(txt, x, y, type, size=16) {
+                this.txt = txt;
+                this.x = x + random(-20, 20);
+                this.y = y - random(10, 30);
+                this.life = 255;
+                this.size = size;
+                
+                if(type === 'tnt') this.col = color(255, 50, 50);
+                else if(type === 'gold') this.col = color(255, 215, 0);
+                else this.col = color(0, 255, 255);
+            }
+            update() {
+                this.y -= 1.5; // 向上飘
+                this.life -= 4; // 渐隐
+            }
+            show() {
+                push();
+                textAlign(CENTER, CENTER);
+                textSize(this.size);
+                textStyle(BOLDITALIC);
+                this.col.setAlpha(this.life);
+                fill(this.col);
+                // 发光字
+                drawingContext.shadowBlur = 10;
+                drawingContext.shadowColor = this.col.toString();
+                text(this.txt, this.x, this.y);
+                pop();
+            }
+        }
+
+        function windowResized() {
+            resizeCanvas(windowWidth, windowHeight);
+            floorY = height - 40;
+        }
+    </script>
+</body>
+</html>

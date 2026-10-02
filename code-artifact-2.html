@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>连续线条绘图仪 - Orthogonal Wire Plotter</title>
+  <script src="https://cdn.jsdelivr.net/npm/p5@1.9.0/lib/p5.min.js"></script>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    body, html {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #080a09;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", monospace;
+    }
+    canvas {
+      display: block;
+      touch-action: none;
+    }
+    /* 顶部简约悬浮控制台 */
+    #toolbar {
+      position: absolute;
+      top: 18px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      background: rgba(10, 16, 13, 0.82);
+      border: 1px solid rgba(80, 255, 170, 0.28);
+      padding: 8px 18px;
+      border-radius: 999px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      z-index: 100;
+      color: #9bfec8;
+      font-size: 13px;
+    }
+    .hud-btn {
+      background: rgba(80, 255, 170, 0.1);
+      border: 1px solid rgba(80, 255, 170, 0.3);
+      color: #bbfde0;
+      padding: 6px 14px;
+      border-radius: 999px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 500;
+      transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+      outline: none;
+    }
+    .hud-btn:hover {
+      background: rgba(80, 255, 170, 0.25);
+      border-color: rgba(80, 255, 170, 0.6);
+      transform: translateY(-1px);
+    }
+    .hud-btn.active {
+      background: #50ffa0;
+      color: #041208;
+      font-weight: 700;
+      border-color: #50ffa0;
+    }
+    .hud-select {
+      background: rgba(80, 255, 170, 0.12);
+      border: 1px solid rgba(80, 255, 170, 0.3);
+      color: #9bfec8;
+      padding: 5px 12px;
+      border-radius: 999px;
+      outline: none;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .hud-select option {
+      background: #0a140f;
+      color: #9bfec8;
+    }
+    /* 底部实时状态与引导 */
+    #status-info {
+      position: absolute;
+      bottom: 22px;
+      left: 24px;
+      color: rgba(160, 255, 200, 0.75);
+      font-size: 12px;
+      line-height: 1.7;
+      font-family: monospace;
+      pointer-events: none;
+      z-index: 90;
+      background: rgba(5, 12, 8, 0.65);
+      padding: 10px 16px;
+      border-left: 3px solid #50ffa0;
+      border-radius: 4px;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+    }
+    #status-info b {
+      color: #ffffff;
+    }
+    #guide-tip {
+      position: absolute;
+      bottom: 22px;
+      right: 24px;
+      color: rgba(180, 245, 215, 0.55);
+      font-size: 12px;
+      pointer-events: none;
+      z-index: 90;
+      letter-spacing: 0.8px;
+    }
+  </style>
+</head>
+<body oncontextmenu="return false;">
+
+  <div id="toolbar">
+    <button class="hud-btn active" id="manualBtn">🧭 鼠标引路操纵</button>
+    <button class="hud-btn" id="autoBtn">🤖 算法全自动漫游</button>
+    <div style="height: 16px; width: 1px; background: rgba(80,255,170,0.25);"></div>
+    <select id="themeSelect" class="hud-select">
+      <option value="crt">📟 示波器荧光绿 (CRT)</option>
+      <option value="paper">📜 绘图仪纸本质感 (Ink)</option>
+      <option value="cyber">🌆 赛博霓虹电缆 (Cyber)</option>
+      <option value="blueprint">📐 激光工业蓝图 (Laser)</option>
+    </select>
+    <button class="hud-btn" id="clearBtn">⚡ 清屏重绘</button>
+    <button class="hud-btn" id="audioBtn">🔊 机械音: 开</button>
+  </div>
+
+  <div id="status-info">
+    <div>绘图笔头坐标: <b id="posVal">X: 0 | Y: 0</b></div>
+    <div>已编织转折点: <b id="vertVal">0</b></div>
+    <div>光标距离: <b id="distVal">0 px</b></div>
+  </div>
+
+  <div id="guide-tip">
+    [移动光标] 笔头将实时正交追随 | [点击/空格] 就地编织阶梯大树/电塔
+  </div>
+
+  <script>
+    const THEMES = {
+      crt: {
+        bg: '#060a08',
+        wirePrimary: '#4af69a',
+        wireSecondary: '#207849',
+        headGlow: '#a8ffda',
+        trailAlpha: 255,
+        gridColor: 'rgba(80, 255, 170, 0.05)',
+        tetherColor: 'rgba(80, 255, 170, 0.25)'
+      },
+      paper: {
+        bg: '#f3efe6',
+        wirePrimary: '#1e2220',
+        wireSecondary: '#7a857f',
+        headGlow: '#d9432e',
+        trailAlpha: 255,
+        gridColor: 'rgba(30, 40, 35, 0.05)',
+        tetherColor: 'rgba(30, 40, 35, 0.2)'
+      },
+      cyber: {
+        bg: '#0a0514',
+        wirePrimary: '#00f7ff',
+        wireSecondary: '#ff007f',
+        headGlow: '#ffe600',
+        trailAlpha: 255,
+        gridColor: 'rgba(0, 247, 255, 0.05)',
+        tetherColor: 'rgba(255, 0, 127, 0.25)'
+      },
+      blueprint: {
+        bg: '#041324',
+        wirePrimary: '#5be8ff',
+        wireSecondary: '#196aa6',
+        headGlow: '#ffffff',
+        trailAlpha: 255,
+        gridColor: 'rgba(91, 232, 255, 0.06)',
+        tetherColor: 'rgba(91, 232, 255, 0.25)'
+      }
+    };
+
+    let activeTheme = THEMES.crt;
+    let isAutoMode = false;
+    let soundEnabled = true;
+
+    // Web Audio 机械绘图仪步进音效
+    let audioCtx = null;
+    function initAudio() {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+    }
+
+    function playTick(freq = 480, duration = 0.03, vol = 0.05) {
+      if (!soundEnabled || !audioCtx) return;
+      try {
+        let now = audioCtx.currentTime;
+        let osc = audioCtx.createOscillator();
+        let gain = audioCtx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(freq, now);
+        osc.frequency.exponentialRampToValueAtTime(80, now + duration);
+
+        gain.gain.setValueAtTime(vol, now);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start(now);
+        osc.stop(now + duration);
+      } catch (e) {}
+    }
+
+    // 连续正交线条绘图仪核心引擎 (真正的全向正交追踪)
+    class ContinuousWireTracer {
+      constructor() {
+        this.stepSize = 6;         // 像素栅格单步模数
+        this.twinDistance = 3.5;   // 双轨平行线条间距
+        this.reset();
+      }
+
+      reset() {
+        this.x = width * 0.15;
+        this.y = height * 0.5;
+        this.targetX = this.x;
+        this.targetY = this.y;
+        
+        // 线条1与线条2的点集缓存
+        this.wire1 = [{ x: this.x, y: this.y }];
+        this.wire2 = [{ x: this.x, y: this.y + this.twinDistance }];
+
+        this.actionQueue = [];
+        this.currentStructure = '实时光标引路';
+        this.totalVertices = 2;
+        this.lastActionTime = 0;
+      }
+
+      // 实时向目标 (tx, ty) 迈进正交折线
+      stepTowards(tx, ty) {
+        this.targetX = tx;
+        this.targetY = ty;
+
+        // 如果有预埋的构件动作队列（如大树、电塔），优先执行
+        if (this.actionQueue.length > 0) {
+          let act = this.actionQueue.shift();
+          this.addOrthogonalSegment(act.dx, act.dy);
+          return;
+        }
+
+        let dx = this.targetX - this.x;
+        let dy = this.targetY - this.y;
+        let dist = Math.hypot(dx, dy);
+
+        // 如果离鼠标距离很近，则在此处微幅怠速，无需狂奔
+        if (dist < 8) return;
+
+        // 根据与光标的距离，动态增加每一帧的正交迭代步数（越远跑得越快，彻底告别延迟）
+        let maxIterations = dist > 200 ? 5 : (dist > 80 ? 3 : 2);
+
+        for (let iter = 0; iter < maxIterations; iter++) {
+          dx = this.targetX - this.x;
+          dy = this.targetY - this.y;
+          if (Math.hypot(dx, dy) < 6) break;
+
+          let absDx = Math.abs(dx);
+          let absDy = Math.abs(dy);
+
+          // 核心正交逻辑：优先走距离更长的一轴，或者交替形成正交阶梯
+          if (absDx >= absDy) {
+            // 水平正交走一步
+            let stepW = Math.min(absDx, this.stepSize * 2);
+            let signX = dx > 0 ? 1 : -1;
+            this.addOrthogonalSegment(signX * stepW, 0);
+
+            // 如果垂直方向也有偏差，跟进一个微台阶，形成阶梯状攀爬
+            if (absDy > 4) {
+              let stepH = Math.min(absDy, this.stepSize);
+              let signY = dy > 0 ? 1 : -1;
+              this.addOrthogonalSegment(0, signY * stepH);
+            }
+          } else {
+            // 垂直正交走一步
+            let stepH = Math.min(absDy, this.stepSize * 2);
+            let signY = dy > 0 ? 1 : -1;
+            this.addOrthogonalSegment(0, signY * stepH);
+
+            if (absDx > 4) {
+              let stepW = Math.min(absDx, this.stepSize);
+              let signX = dx > 0 ? 1 : -1;
+              this.addOrthogonalSegment(signX * stepW, 0);
+            }
+          }
+        }
+      }
+
+      // 执行正交增量位移，并同步录入双轨线
+      addOrthogonalSegment(dx, dy) {
+        if (dx === 0 && dy === 0) return;
+        this.x += dx;
+        this.y += dy;
+
+        this.wire1.push({ x: this.x, y: this.y });
+        this.wire2.push({ x: this.x, y: this.y + this.twinDistance });
+        this.totalVertices += 2;
+
+        if (Math.abs(dy) > 1 || Math.abs(dx) > 1) {
+          if (frameCount % 3 === 0) {
+            playTick(360 + (height - this.y) * 0.7, 0.02, 0.035);
+          }
+        }
+      }
+
+      // 就地生长一棵正交松树
+      triggerTree(treeW = 60, treeH = 120) {
+        let acts = [];
+        let currentH = 0;
+
+        // 左侧阶梯锯齿向树冠攀爬
+        while (currentH < treeH) {
+          let jmpY = 6 + Math.floor(Math.random() * 8);
+          currentH += jmpY;
+          acts.push({ dx: 0, dy: -jmpY });
+
+          let branchL = 6 + Math.floor(Math.random() * 10);
+          acts.push({ dx: branchL, dy: 0 });
+          acts.push({ dx: 0, dy: -3 });
+          acts.push({ dx: -Math.floor(branchL * 0.7), dy: 0 });
+        }
+
+        // 树梢天线探针
+        acts.push({ dx: 0, dy: -10 });
+        acts.push({ dx: 4, dy: 0 });
+        acts.push({ dx: 0, dy: 10 });
+
+        // 右侧阶梯向下返回基线
+        while (currentH > 0) {
+          let jmpY = 6 + Math.floor(Math.random() * 8);
+          currentH -= jmpY;
+          let branchL = 6 + Math.floor(Math.random() * 10);
+          acts.push({ dx: branchL, dy: 0 });
+          acts.push({ dx: 0, dy: jmpY });
+          acts.push({ dx: -Math.floor(branchL * 0.7), dy: 0 });
+        }
+
+        acts.push({ dx: 8, dy: 0 });
+        for (let a of acts) this.actionQueue.push(a);
+        playTick(680, 0.06, 0.1);
+      }
+
+      // 就地构建正交输电高压铁塔
+      triggerPylon(pylonW = 44, pylonH = 140) {
+        let acts = [];
+        let halfW = pylonW * 0.5;
+
+        acts.push({ dx: halfW * 0.3, dy: 0 });
+        acts.push({ dx: 0, dy: -pylonH * 0.65 });
+        acts.push({ dx: -halfW, dy: 0 });
+        acts.push({ dx: 0, dy: -8 });
+        acts.push({ dx: pylonW * 2, dy: 0 });
+        acts.push({ dx: 0, dy: 8 });
+        acts.push({ dx: -halfW, dy: 0 });
+        acts.push({ dx: 0, dy: -pylonH * 0.35 });
+        acts.push({ dx: 4, dy: 0 });
+        acts.push({ dx: 0, dy: pylonH });
+        acts.push({ dx: 10, dy: 0 });
+
+        for (let a of acts) this.actionQueue.push(a);
+        playTick(800, 0.07, 0.12);
+      }
+
+      render() {
+        push();
+        // 绘制主线 1
+        stroke(activeTheme.wirePrimary);
+        strokeWeight(2.2);
+        strokeJoin(MITER);
+        noFill();
+        beginShape();
+        for (let i = 0; i < this.wire1.length; i++) {
+          vertex(this.wire1[i].x, this.wire1[i].y);
+        }
+        endShape();
+
+        // 绘制平行副线 2
+        stroke(activeTheme.wireSecondary);
+        strokeWeight(1.4);
+        beginShape();
+        for (let i = 0; i < this.wire2.length; i++) {
+          vertex(this.wire2[i].x, this.wire2[i].y);
+        }
+        endShape();
+
+        // 定期绘制横截绝缘短线
+        strokeWeight(1.0);
+        let stepInterval = Math.max(1, Math.floor(this.wire1.length / 300));
+        for (let i = 0; i < this.wire1.length; i += stepInterval) {
+          if (i % 6 === 0) {
+            line(this.wire1[i].x, this.wire1[i].y, this.wire2[i].x, this.wire2[i].y);
+          }
+        }
+
+        // 绘制正在编织的笔尖与追踪雷达
+        this.renderPlotterHead();
+        pop();
+      }
+
+      renderPlotterHead() {
+        push();
+        translate(this.x, this.y);
+
+        // 笔头示波器光圈
+        stroke(activeTheme.headGlow);
+        strokeWeight(1.5);
+        noFill();
+        circle(0, 0, 16);
+
+        // 十字准星
+        line(-10, 0, 10, 0);
+        line(0, -10, 0, 10);
+
+        // 中心发光微粒
+        fill(activeTheme.headGlow);
+        noStroke();
+        circle(0, 0, 4.5);
+        pop();
+      }
+    }
+
+    let tracer;
+
+    function setup() {
+      createCanvas(windowWidth, windowHeight);
+      pixelDensity(min(window.devicePixelRatio || 1, 2));
+      tracer = new ContinuousWireTracer();
+      setupEvents();
+    }
+
+    function windowResized() {
+      resizeCanvas(windowWidth, windowHeight);
+    }
+
+    function draw() {
+      background(activeTheme.bg);
+
+      // 背景坐标纸网格
+      drawPlotterGrid();
+
+      // 计算目标坐标：严格以鼠标为核心导向
+      let targetX, targetY;
+      if (isAutoMode) {
+        targetX = width * 0.5 + Math.cos(frameCount * 0.012) * (width * 0.38);
+        targetY = height * 0.5 + Math.sin(frameCount * 0.018) * (height * 0.32);
+      } else {
+        // 如果鼠标在画布内，绝对追踪鼠标；若未激活则停留屏幕中部
+        targetX = (mouseX > 0 && mouseX < width) ? mouseX : width * 0.5;
+        targetY = (mouseY > 0 && mouseY < height) ? mouseY : height * 0.5;
+      }
+
+      // 绘制从笔头连接到鼠标的激光牵引虚线（提供强烈的直观反馈）
+      drawTether(tracer.x, tracer.y, targetX, targetY);
+
+      // 正交推进
+      tracer.stepTowards(targetX, targetY);
+
+      // 渲染整条完整的一笔画艺术线条
+      tracer.render();
+
+      // 实时更新状态面板
+      if (frameCount % 4 === 0) {
+        let dist = Math.round(Math.hypot(targetX - tracer.x, targetY - tracer.y));
+        document.getElementById('posVal').innerText = `X: ${Math.round(tracer.x)} | Y: ${Math.round(tracer.y)}`;
+        document.getElementById('vertVal').innerText = tracer.totalVertices;
+        document.getElementById('distVal').innerText = `${dist} px`;
+      }
+    }
+
+    // 绘制示波器导向虚线和光标靶环
+    function drawTether(x1, y1, x2, y2) {
+      push();
+      stroke(activeTheme.tetherColor);
+      strokeWeight(1);
+      drawingContext.setLineDash([4, 4]);
+      line(x1, y1, x2, y2);
+      drawingContext.setLineDash([]);
+
+      // 鼠标目标落点处的光标靶环
+      noFill();
+      stroke(activeTheme.tetherColor);
+      circle(x2, y2, 22);
+      circle(x2, y2, 6);
+      pop();
+    }
+
+    function drawPlotterGrid() {
+      push();
+      stroke(activeTheme.gridColor);
+      strokeWeight(1);
+      let spacing = 36;
+      for (let x = 0; x < width; x += spacing) {
+        line(x, 0, x, height);
+      }
+      for (let y = 0; y < height; y += spacing) {
+        line(0, y, width, y);
+      }
+      pop();
+    }
+
+    function mousePressed() {
+      initAudio();
+      if (mouseY < 75 && mouseX > width / 2 - 280 && mouseX < width / 2 + 280) return;
+
+      // 点击就地插入一座分形构件
+      if (Math.random() > 0.5) {
+        tracer.triggerTree(55 + Math.random() * 25, 100 + Math.random() * 60);
+      } else {
+        tracer.triggerPylon(40 + Math.random() * 20, 120 + Math.random() * 50);
+      }
+    }
+
+    function keyPressed() {
+      initAudio();
+      if (key === ' ') {
+        tracer.triggerTree();
+      } else if (keyCode === ENTER || key === 'e') {
+        tracer.triggerPylon();
+      }
+    }
+
+    function setupEvents() {
+      const manualBtn = document.getElementById('manualBtn');
+      const autoBtn = document.getElementById('autoBtn');
+      const themeSelect = document.getElementById('themeSelect');
+      const clearBtn = document.getElementById('clearBtn');
+      const audioBtn = document.getElementById('audioBtn');
+
+      manualBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        isAutoMode = false;
+        manualBtn.classList.add('active');
+        autoBtn.classList.remove('active');
+        document.getElementById('guide-tip').innerText = "[移动光标] 笔头将实时正交追随 | [点击/空格] 就地编织阶梯大树/电塔";
+      });
+
+      autoBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        isAutoMode = true;
+        autoBtn.classList.add('active');
+        manualBtn.classList.remove('active');
+        document.getElementById('guide-tip').innerText = "🤖 算法自主漫游编织中... 你仍可随时点击强制介入建造构件";
+      });
+
+      themeSelect.addEventListener('change', (e) => {
+        activeTheme = THEMES[e.target.value];
+      });
+
+      clearBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        initAudio();
+        tracer.reset();
+      });
+
+      audioBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        initAudio();
+        soundEnabled = !soundEnabled;
+        audioBtn.innerText = soundEnabled ? '🔊 机械音: 开' : '🔇 机械音: 关';
+      });
+    }
+  </script>
+</body>
+</html>

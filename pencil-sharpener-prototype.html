@@ -1,0 +1,998 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>卷笔刀与铅笔 - 交互原型 PENCIL SHARPENER PROTOTYPE</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+    }
+
+    body, html {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #eae7df; /* 原图精确浅米纯色背景 */
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+
+    /* 舞台主容器：全屏自适应，内部 SVG 绝对居中保持构图比例 */
+    #stage-container {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    svg#scene {
+      width: 100%;
+      height: 100%;
+      max-width: 100vw;
+      max-height: 100vh;
+      display: block;
+      touch-action: none;
+    }
+
+    /* 铅笔拖拽抓手样式 */
+    #pencil-interactive-layer {
+      cursor: grab;
+      touch-action: none;
+    }
+
+    #pencil-interactive-layer:active {
+      cursor: grabbing;
+    }
+
+    /* 削笔时卷笔刀本体的高频开心咀嚼微振动 */
+    .sharpener-quiver {
+      animation: sharpenerChomp 0.12s infinite alternate ease-in-out;
+      transform-origin: 270px 446px;
+    }
+
+    @keyframes sharpenerChomp {
+      0% { transform: translate(0px, 0px) rotate(0deg) scale(1); }
+      50% { transform: translate(-1.5px, 0.8px) rotate(-0.6deg) scale(1.01); }
+      100% { transform: translate(1px, -1px) rotate(0.4deg) scale(0.995); }
+    }
+
+    /* 铅笔在孔内的局部微抖动：专用于内部独立子群组，严禁覆盖父级的真实位姿坐标！ */
+    .pencil-sharpening-spin {
+      animation: pencilSpinTwist 0.14s infinite ease-in-out;
+      transform-origin: 0 0;
+    }
+
+    @keyframes pencilSpinTwist {
+      0% { transform: translateY(0px) rotate(0deg); }
+      25% { transform: translateY(-1.2px) rotate(0.5deg) scaleY(0.98); }
+      50% { transform: translateY(0px) rotate(0deg) scaleY(1); }
+      75% { transform: translateY(1.2px) rotate(-0.5deg) scaleY(0.98); }
+      100% { transform: translateY(0px) rotate(0deg); }
+    }
+
+    /* 笔尖闪光星芒动画 */
+    @keyframes glintTwinkle {
+      0% { transform: scale(0) rotate(0deg); opacity: 0; }
+      50% { transform: scale(1.3) rotate(90deg); opacity: 1; }
+      100% { transform: scale(0) rotate(180deg); opacity: 0; }
+    }
+
+    .sparkle-active {
+      animation: glintTwinkle 0.7s cubic-bezier(0.2, 0.9, 0.3, 1.2) forwards;
+      transform-origin: 0 0;
+    }
+
+    /* 削笔卷花飘落动画 */
+    @keyframes shavePop {
+      0% { transform: translate(368px, 420px) scale(0.4) rotate(0deg); opacity: 0; }
+      50% { transform: translate(340px, 385px) scale(1.1) rotate(-35deg); opacity: 1; }
+      100% { transform: translate(320px, 460px) scale(0.9) rotate(-70deg); opacity: 0; }
+    }
+
+    .shaving-flutter {
+      animation: shavePop 0.85s infinite ease-out;
+    }
+
+    /* 顶部控制栏 */
+    .top-bar {
+      position: absolute;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      z-index: 20;
+    }
+
+    .badge-btn {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(255, 255, 255, 0.8);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border: 1.5px solid rgba(255, 255, 255, 0.95);
+      border-radius: 30px;
+      padding: 8px 18px;
+      font-size: 12px;
+      font-weight: 800;
+      color: #333a42;
+      cursor: pointer;
+      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.06);
+      transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+
+    .badge-btn:hover {
+      background: rgba(255, 255, 255, 0.95);
+      transform: translateY(-1px);
+    }
+
+    .badge-btn:active {
+      transform: scale(0.96);
+    }
+
+    .audio-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #4bb88e;
+      box-shadow: 0 0 8px #4bb88e;
+    }
+
+    .audio-badge.muted .audio-dot {
+      background: #ea5e6b;
+      box-shadow: none;
+    }
+
+    /* 底部极简原型状态与操作栏 */
+    .bottom-dock {
+      position: absolute;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      z-index: 10;
+      pointer-events: none;
+    }
+
+    .prototype-hud {
+      background: rgba(255, 255, 255, 0.75);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-radius: 24px;
+      padding: 10px 24px;
+      color: #2c333a;
+      font-size: 12px;
+      font-weight: 800;
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.06);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      white-space: nowrap;
+      letter-spacing: 0.3px;
+    }
+
+    .status-indicator {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: #f0a33a;
+      transition: background 0.25s ease, transform 0.25s ease;
+    }
+
+    .status-indicator.sharpening {
+      background: #dc4056;
+      transform: scale(1.3);
+    }
+
+    .status-indicator.sharpened {
+      background: #4c90c3;
+      transform: scale(1.2);
+    }
+
+    .quick-actions {
+      pointer-events: auto;
+      display: flex;
+      gap: 8px;
+    }
+
+    .action-chip {
+      background: rgba(255, 255, 255, 0.7);
+      border: 1px solid rgba(255, 255, 255, 0.9);
+      border-radius: 14px;
+      padding: 5px 12px;
+      font-size: 11px;
+      font-weight: 700;
+      color: #495460;
+      cursor: pointer;
+      backdrop-filter: blur(8px);
+      transition: all 0.15s ease;
+    }
+
+    .action-chip:hover {
+      background: #ffffff;
+      color: #1a2028;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 顶部控制按钮 -->
+  <div class="top-bar">
+    <button class="badge-btn audio-badge" id="audio-btn">
+      <span class="audio-dot" id="audio-dot"></span>
+      <span id="audio-label">🔊 音效已开启</span>
+    </button>
+  </div>
+
+  <div id="stage-container">
+    <svg id="scene" viewBox="0 0 1000 800" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
+      <!-- 1. 浅米纯色背景 -->
+      <rect width="1000" height="800" fill="#eae7df" />
+
+      <!-- ========================================================
+           2. 阴影层 (Soft Flat Shadows)
+           ======================================================== -->
+      <g id="shadows-layer">
+        <!-- 卷笔刀底部投影 -->
+        <ellipse cx="278" cy="488" rx="100" ry="10" fill="#dad8cf" opacity="0.85" />
+
+        <!-- 铅笔地面长投影：伴随铅笔摆平与位移产生透视平移 -->
+        <polygon id="pencil-shadow-path" points="505,492 940,545 930,555 498,495" fill="#dad8cf" opacity="0.8" />
+      </g>
+
+      <!-- ========================================================
+           3. 卷笔刀背部孔洞内腔底板 (Behind the pencil)
+           ======================================================== -->
+      <g id="sharpener-cavity-back">
+        <!-- 卷笔刀右侧 3D 透视斜切面底板 -->
+        <polygon points="368,398 382,410 382,482 368,496" fill="#3b74a1" />
+        <!-- 插笔孔内暗色凹洞 (深蓝阴影椭圆) -->
+        <ellipse cx="376" cy="446" rx="6" ry="18" fill="#1b3952" />
+      </g>
+
+      <!-- ========================================================
+           4. 可交互黄色木铅笔层 (Pencil Layer)
+           【核心保证】：笔尖插进卷笔刀孔内，整条黄色笔杆和橡皮擦
+           绝不消失、绝不向上乱飞，水平横卧在卷笔刀右侧！
+           ======================================================== -->
+      <g id="pencil-interactive-layer">
+        <!-- 铅笔主位姿组：由 JS 控制真实 translate(tipX, tipY) 与 rotate(angle) -->
+        <g id="pencil-motion-group" transform="translate(505, 415) rotate(-35.5)">
+          <!-- 内部专属震颤层：削笔时的细微抖动在此独立播放，完全隔离父级坐标 -->
+          <g id="pencil-jitter-group">
+          
+            <!-- A. 削开的原木锥形部分 (#ebd5b8) -->
+            <polygon points="0,0 72,-20 72,20" fill="#ebd5b8" />
+            <!-- 原木受光立体微切面 -->
+            <polygon points="0,0 72,-7 72,7" fill="#f5e6cf" />
+
+            <!-- B. 石墨铅笔芯 (钝头与极尖锐笔尖无缝切换) -->
+            <!-- 钝头平坦石墨芯 (未削/拔出初始状态) -->
+            <polygon id="lead-blunt" points="0,0 18,-5 18,5" fill="#363234" />
+            <!-- 尖锐石墨细针芯 (削好后锋利状态) -->
+            <polygon id="lead-sharp" points="-14,0 18,-5 18,5" fill="#363234" opacity="0" />
+
+            <!-- C. 暖黄色铅笔长笔身 (#f0a33a) -->
+            <rect x="72" y="-20" width="280" height="40" fill="#f0a33a" />
+            <!-- 笔身中间高光条纹 (六角笔杆切面，自转时会有滑光动效) -->
+            <rect id="pencil-body-facet" x="72" y="-7" width="280" height="14" fill="#fbbd5c" />
+            <!-- 铅笔深色底边背光棱面 -->
+            <rect x="72" y="13" width="280" height="7" fill="#dc8a1d" opacity="0.35" />
+
+            <!-- D. 银白色金属套管 (#d4dadf) -->
+            <rect x="352" y="-20" width="56" height="40" fill="#d4dadf" />
+            <rect x="352" y="-7" width="56" height="14" fill="#e6eaee" />
+            <line x1="368" y1="-20" x2="368" y2="20" stroke="#bcc4cb" stroke-width="1.5" />
+            <line x1="392" y1="-20" x2="392" y2="20" stroke="#bcc4cb" stroke-width="1.5" />
+
+            <!-- ====================================================
+                 E. 铅笔套管上的生动多态笑脸表情 (Pencil Emotion Face)
+                 ==================================================== -->
+            <g id="pencil-face-group" transform="translate(380, 0) rotate(90)">
+              <!-- 1. 平时：呆萌悠闲笑脸 (Blunt Normal) -->
+              <g id="pencil-face-normal">
+                <circle cx="-5" cy="-7" r="3.2" fill="#252b33" />
+                <circle cx="5" cy="-7" r="3.2" fill="#252b33" />
+                <path d="M -5 -1 Q 0 4 5 -1" fill="none" stroke="#252b33" stroke-width="2.5" stroke-linecap="round" />
+                <circle cx="-9" cy="-4" r="2.2" fill="#ea5e6b" opacity="0.6" />
+                <circle cx="9" cy="-4" r="2.2" fill="#ea5e6b" opacity="0.6" />
+              </g>
+
+              <!-- 2. 削笔中：被自转旋转挠痒痒、晕头转向超嗨脸 (Sharpening Dizzy Face) -->
+              <g id="pencil-face-spinning" opacity="0">
+                <!-- 旋转晕乎乎螺旋/闭眼弧线 > < -->
+                <path d="M -7 -9 L -3 -5 M -7 -5 L -3 -9" stroke="#252b33" stroke-width="2.5" stroke-linecap="round" />
+                <path d="M 3 -9 L 7 -5 M 3 -5 L 7 -9" stroke="#252b33" stroke-width="2.5" stroke-linecap="round" />
+                <!-- 张大 O 型惊讶欢笑嘴巴 -->
+                <ellipse cx="0" cy="1" rx="4" ry="5.5" fill="#252b33" />
+                <ellipse cx="0" cy="3" rx="2.5" ry="3" fill="#eb5c6e" />
+                <!-- 剧烈害羞腮红 -->
+                <circle cx="-9" cy="-4" r="3.2" fill="#ea5e6b" opacity="0.9" />
+                <circle cx="9" cy="-4" r="3.2" fill="#ea5e6b" opacity="0.9" />
+              </g>
+
+              <!-- 3. 削好后拔出：超自信神气星星眼 (Proud Sharpened Face) -->
+              <g id="pencil-face-proud" opacity="0">
+                <!-- 闪亮星星眼 ★ ★ -->
+                <path d="M -5 -9 L -4 -6 L -1 -6 L -3 -4 L -2 -1 L -5 -3 L -8 -1 L -7 -4 L -9 -6 L -6 -6 Z" fill="#252b33" />
+                <path d="M 5 -9 L 6 -6 L 9 -6 L 7 -4 L 8 -1 L 5 -3 L 2 -1 L 3 -4 L 1 -6 L 4 -6 Z" fill="#252b33" />
+                <!-- 得意自信大歪嘴笑 -->
+                <path d="M -6 -1 Q 0 7 7 1" fill="none" stroke="#252b33" stroke-width="2.8" stroke-linecap="round" />
+                <circle cx="-10" cy="-3" r="2.6" fill="#ea5e6b" opacity="0.75" />
+                <circle cx="10" cy="-3" r="2.6" fill="#ea5e6b" opacity="0.75" />
+              </g>
+            </g>
+
+            <!-- F. 顶端粉红橡皮擦 (#dc4056) -->
+            <path d="M 408 -20 L 424 -20 C 438 -20, 438 20, 424 20 L 408 20 Z" fill="#dc4056" />
+
+            <!-- G. 笔尖高光闪光星芒 (拔出削尖时闪烁 ✨) -->
+            <g id="pencil-glint" transform="translate(-14, 0)" opacity="0">
+              <path d="M 0 -14 Q 0 0 -14 0 Q 0 0 0 14 Q 0 0 14 0 Q 0 0 0 -14 Z" fill="#ffffff" />
+              <circle cx="0" cy="0" r="3" fill="#ffe066" />
+            </g>
+
+            <!-- H. 铅笔全身超大灵敏透明触控区 -->
+            <rect x="-40" y="-35" width="500" height="70" fill="transparent" />
+          </g>
+        </g>
+      </g>
+
+      <!-- ========================================================
+           5. 卷笔刀正立面与外壳遮挡层 (Front Housing & Dynamic Face)
+           位于笔尖上方，实现“笔尖插进孔内包裹，笔身依然留在外面”的真实层级
+           ======================================================== -->
+      <g id="sharpener-group">
+        <!-- 卷笔刀正立面主体 (#4c90c3) -->
+        <path d="M 175 398 
+                 L 225 398 
+                 C 255 410, 288 410, 318 398 
+                 L 368 398 
+                 L 368 496 
+                 L 318 496 
+                 C 288 484, 255 484, 225 496 
+                 L 175 496 
+                 Z" fill="#4c90c3" />
+
+        <!-- 插笔孔前边缘立体唇边 (半包围圆孔唇面) -->
+        <path d="M 368 428 Q 374 430 374 446 Q 374 462 368 464 Z" fill="#32638a" />
+
+        <!-- 银白色金属刀片 (位于右半侧) -->
+        <rect x="264" y="432" width="104" height="24" rx="2" ry="2" fill="#ffffff" />
+        <rect x="264" y="454" width="104" height="2" fill="#dde2e8" />
+
+        <!-- 刀片固定圆螺丝 -->
+        <circle cx="278" cy="444" r="5.5" fill="#cfd6dc" />
+        <line x1="275" y1="444" x2="281" y2="444" stroke="#9aa3ab" stroke-width="1.5" stroke-linecap="round" />
+
+        <!-- ====================================================
+             卷笔刀丰富情绪面容系统 (Sharpener Emotion Faces)
+             ==================================================== -->
+        <g id="sharpener-face-container">
+          <!-- 1. 平常：温柔可爱的微笑脸 (Normal Relaxed) -->
+          <g id="sharpener-face-normal">
+            <!-- 眯眯笑眼 -->
+            <path d="M 197 443 Q 203 438 209 443" fill="none" stroke="#252b33" stroke-width="3.5" stroke-linecap="round" />
+            <path d="M 227 443 Q 233 438 239 443" fill="none" stroke="#252b33" stroke-width="3.5" stroke-linecap="round" />
+            <!-- 开心小红嘴 -->
+            <g transform="translate(218, 458)">
+              <path d="M -16 0 Q 0 16 16 0 Z" fill="#252b33" />
+              <path d="M -9 4 Q 0 16 9 4 Q 0 8 -9 4 Z" fill="#eb5c6e" />
+            </g>
+          </g>
+
+          <!-- 2. 削笔中：大嚼特嚼开心吃铅笔脸 (Chewing / Chomping Ecstatic) -->
+          <g id="sharpener-face-chewing" opacity="0">
+            <!-- 极度享受的挤眼 > < -->
+            <path d="M 196 441 L 202 445 L 196 449" fill="none" stroke="#252b33" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="M 240 441 L 234 445 L 240 449" fill="none" stroke="#252b33" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" />
+            <!-- 高频吃木头嚼动的大笑嘴巴 -->
+            <g id="sharpener-chewing-mouth" transform="translate(218, 459)">
+              <ellipse cx="0" cy="0" rx="16" ry="11" fill="#252b33" />
+              <!-- 欢快的小红舌头与白门牙 -->
+              <rect x="-8" y="-11" width="16" height="5" rx="2" fill="#ffffff" />
+              <ellipse cx="0" cy="5" rx="9" ry="6" fill="#eb5c6e" />
+            </g>
+            <!-- 开心吃饱的粉红小腮红 -->
+            <circle cx="192" cy="454" r="6" fill="#eb5c6e" opacity="0.75" />
+            <circle cx="244" cy="454" r="6" fill="#eb5c6e" opacity="0.75" />
+          </g>
+
+          <!-- 3. 削好后：吃饱满足、意犹未尽舔嘴笑脸 (Satisfied Licking Lips) -->
+          <g id="sharpener-face-satisfied" opacity="0">
+            <circle cx="203" cy="442" r="3.6" fill="#252b33" />
+            <circle cx="233" cy="442" r="3.6" fill="#252b33" />
+            <!-- 舔舌得意笑 -->
+            <g transform="translate(218, 458)">
+              <path d="M -15 0 Q 0 14 15 0" fill="none" stroke="#252b33" stroke-width="3.5" stroke-linecap="round" />
+              <!-- 探出嘴角舔舔的小舌尖 -->
+              <path d="M 5 2 C 8 0, 14 3, 11 8 C 8 11, 4 6, 5 2 Z" fill="#eb5c6e" />
+            </g>
+            <circle cx="193" cy="449" r="4.5" fill="#eb5c6e" opacity="0.5" />
+            <circle cx="243" cy="449" r="4.5" fill="#eb5c6e" opacity="0.5" />
+          </g>
+        </g>
+
+        <!-- 削笔产生的螺旋木屑碎花 (平时隐藏，削笔时向外喷涌飘落) -->
+        <g id="shaving-spray-1" opacity="0" class="shaving-flutter" pointer-events="none">
+          <path d="M 0 0 C 12 -16, 26 -10, 20 6 C 14 16, -6 12, 0 0 Z" fill="#ebd5b8" />
+          <path d="M 6 -6 C 16 -18, 30 -12, 24 4" fill="none" stroke="#f0a33a" stroke-width="3" stroke-linecap="round" />
+        </g>
+        <g id="shaving-spray-2" opacity="0" pointer-events="none" style="transform-origin: 368px 430px;">
+          <path d="M 370 425 C 382 410, 394 420, 386 434 C 380 442, 365 435, 370 425 Z" fill="#f0a33a" />
+          <path d="M 373 422 C 383 412, 391 422, 384 430" fill="none" stroke="#ebd5b8" stroke-width="2.5" />
+        </g>
+      </g>
+    </svg>
+
+    <!-- 底部状态与快捷操作栏 -->
+    <div class="bottom-dock">
+      <div class="prototype-hud">
+        <span class="status-indicator" id="status-indicator"></span>
+        <span id="status-text">拖动铅笔靠近卷笔刀：会自动摆平插入，开始转动削尖！</span>
+      </div>
+
+      <div class="quick-actions">
+        <button class="action-chip" id="btn-auto-demo">✨ 自动演示削笔</button>
+        <button class="action-chip" id="btn-pull-out">↩ 拔出铅笔</button>
+        <button class="action-chip" id="btn-reset-blunt">🔄 重置为钝笔</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    /* ==========================================================
+       纯原生 Web Audio 机械削铅笔与卡通音效引擎
+       ========================================================== */
+    class SharpenerAudioEngine {
+      constructor() {
+        this.ctx = null;
+        this.muted = false;
+        this.spinWhittleTimer = null;
+        this.isWhittlingSoundActive = false;
+      }
+
+      init() {
+        if (!this.ctx) {
+          const AudioContext = window.AudioContext || window.webkitAudioContext;
+          this.ctx = new AudioContext();
+        }
+        if (this.ctx.state === 'suspended') {
+          this.ctx.resume();
+        }
+      }
+
+      toggleMute() {
+        this.muted = !this.muted;
+        return this.muted;
+      }
+
+      // 1. 顺滑卡进插孔声 (Snap In)
+      playInsertSound() {
+        if (this.muted || !this.ctx) return;
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(360, now);
+        osc.frequency.exponentialRampToValueAtTime(160, now + 0.09);
+
+        gain.gain.setValueAtTime(0.24, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.11);
+      }
+
+      // 2. 连续真实的旋转削木屑摩擦与齿轮咔嗒声 (Spinning Whittling Rasp)
+      startWhittlingLoop() {
+        if (this.muted || !this.ctx || this.isWhittlingSoundActive) return;
+        this.isWhittlingSoundActive = true;
+
+        const playChompCrunch = () => {
+          if (!this.isWhittlingSoundActive || this.muted) return;
+          const now = this.ctx.currentTime;
+
+          // 刀片切木屑的白噪声粉碎声
+          const bufferSize = this.ctx.sampleRate * 0.08;
+          const noiseBuffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+          const output = noiseBuffer.getChannelData(0);
+          for (let i = 0; i < bufferSize; i++) {
+            output[i] = Math.random() * 2 - 1;
+          }
+          const whiteNoise = this.ctx.createBufferSource();
+          whiteNoise.buffer = noiseBuffer;
+
+          const filter = this.ctx.createBiquadFilter();
+          filter.type = 'bandpass';
+          filter.frequency.setValueAtTime(1600 + Math.random() * 400, now);
+          filter.Q.setValueAtTime(3.5, now);
+
+          const gain = this.ctx.createGain();
+          gain.gain.setValueAtTime(0.2, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+
+          whiteNoise.connect(filter);
+          filter.connect(gain);
+          gain.connect(this.ctx.destination);
+          whiteNoise.start(now);
+
+          // 伴随微小的齿轮转动节奏咔嗒声
+          const osc = this.ctx.createOscillator();
+          const oscGain = this.ctx.createGain();
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(480 + (Math.random() - 0.5) * 60, now);
+          osc.frequency.exponentialRampToValueAtTime(180, now + 0.04);
+          oscGain.gain.setValueAtTime(0.08, now);
+          oscGain.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
+          osc.connect(oscGain);
+          oscGain.connect(this.ctx.destination);
+          osc.start(now);
+          osc.stop(now + 0.045);
+        };
+
+        this.spinWhittleTimer = setInterval(playChompCrunch, 110);
+      }
+
+      stopWhittlingLoop() {
+        this.isWhittlingSoundActive = false;
+        if (this.spinWhittleTimer) {
+          clearInterval(this.spinWhittleTimer);
+          this.spinWhittleTimer = null;
+        }
+      }
+
+      // 3. 拔出时的清脆啵声 (Pop)
+      playExtractSound() {
+        if (this.muted || !this.ctx) return;
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(280, now);
+        osc.frequency.exponentialRampToValueAtTime(740, now + 0.09);
+
+        gain.gain.setValueAtTime(0.25, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.11);
+
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.11);
+      }
+
+      // 4. 笔尖削锋利后的闪光“叮”音 (Sparkle Chime)
+      playSparkleSound() {
+        if (this.muted || !this.ctx) return;
+        const now = this.ctx.currentTime;
+        const notes = [1046, 1318, 1567, 2093]; // C6, E6, G6, C7 和弦
+        notes.forEach((freq, idx) => {
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(freq, now + idx * 0.05);
+
+          gain.gain.setValueAtTime(0.001, now + idx * 0.05);
+          gain.gain.linearRampToValueAtTime(0.12, now + idx * 0.05 + 0.02);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.05 + 0.35);
+
+          osc.connect(gain);
+          gain.connect(this.ctx.destination);
+          osc.start(now + idx * 0.05);
+          osc.stop(now + idx * 0.05 + 0.36);
+        });
+      }
+    }
+
+    const sound = new SharpenerAudioEngine();
+    window.addEventListener('pointerdown', () => sound.init(), { once: true });
+
+    // 音效开关
+    const audioBtn = document.getElementById('audio-btn');
+    const audioLabel = document.getElementById('audio-label');
+    audioBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      sound.init();
+      const muted = sound.toggleMute();
+      if (muted) {
+        audioBtn.classList.add('muted');
+        audioLabel.textContent = '🔇 音效已静音';
+        sound.stopWhittlingLoop();
+      } else {
+        audioBtn.classList.remove('muted');
+        audioLabel.textContent = '🔊 音效已开启';
+      }
+    });
+
+    /* ==========================================================
+       DOM 节点与状态管理
+       ========================================================== */
+    const svgScene = document.getElementById('scene');
+    const pencilLayer = document.getElementById('pencil-interactive-layer');
+    const pencilMotionGroup = document.getElementById('pencil-motion-group');
+    const pencilJitterGroup = document.getElementById('pencil-jitter-group');
+    const pencilBodyFacet = document.getElementById('pencil-body-facet');
+    const leadBlunt = document.getElementById('lead-blunt');
+    const leadSharp = document.getElementById('lead-sharp');
+    const pencilGlint = document.getElementById('pencil-glint');
+
+    // 铅笔 3 种表情
+    const pencilFaceNormal = document.getElementById('pencil-face-normal');
+    const pencilFaceSpinning = document.getElementById('pencil-face-spinning');
+    const pencilFaceProud = document.getElementById('pencil-face-proud');
+
+    // 卷笔刀 3 种表情
+    const sharpenerGroup = document.getElementById('sharpener-group');
+    const sharpenerFaceNormal = document.getElementById('sharpener-face-normal');
+    const sharpenerFaceChewing = document.getElementById('sharpener-face-chewing');
+    const sharpenerFaceSatisfied = document.getElementById('sharpener-face-satisfied');
+
+    // 碎花木屑
+    const shavingSpray1 = document.getElementById('shaving-spray-1');
+    const shavingSpray2 = document.getElementById('shaving-spray-2');
+    const shadowPath = document.getElementById('pencil-shadow-path');
+
+    const statusIndicator = document.getElementById('status-indicator');
+    const statusText = document.getElementById('status-text');
+
+    // 参考基准坐标
+    const DEFAULT_TIP = { x: 505, y: 415 };
+    const DEFAULT_ANGLE = -35.5;
+    const HOLE_TARGET = { x: 376, y: 446 }; // 卷笔刀孔洞中心
+
+    // 核心状态机
+    let isSharpened = false;    // 当前笔尖是否已削尖
+    let isInsideHole = false;   // 是否在孔内削笔中
+    let currentTipX = DEFAULT_TIP.x;
+    let currentTipY = DEFAULT_TIP.y;
+    let currentAngle = DEFAULT_ANGLE;
+
+    let isDragging = false;
+    let dragStartPointer = { x: 0, y: 0 };
+    let dragStartTip = { x: DEFAULT_TIP.x, y: DEFAULT_TIP.y };
+
+    let spinAnimationTimer = null;
+    let spinPhase = 0;
+
+    // 屏幕坐标转 SVG 内部标准坐标
+    function clientToSvg(clientX, clientY) {
+      const pt = svgScene.createSVGPoint();
+      pt.x = clientX;
+      pt.y = clientY;
+      const ctm = svgScene.getScreenCTM();
+      if (!ctm) return { x: clientX, y: clientY };
+      return pt.matrixTransform(ctm.inverse());
+    }
+
+    /* ==========================================================
+       核心动态算法：靠近时平滑摆平至水平 0°，并保证笔身绝不消失！
+       ========================================================== */
+    function computePencilPose(rawX, rawY) {
+      const dx = rawX - HOLE_TARGET.x;
+
+      let targetX = rawX;
+      let targetY = rawY;
+      let targetAngle = DEFAULT_ANGLE;
+
+      if (rawX >= HOLE_TARGET.x) {
+        // ---- 阶段 1：在孔洞右侧时，随着接近孔洞，角度由 -35.5° 平滑摆平至 0° ----
+        const t = Math.max(0, Math.min(1, dx / 150));
+        const smoothT = t * t * (3 - 2 * t);
+        targetAngle = DEFAULT_ANGLE * smoothT;
+
+        // 距离小于 120px 时，Y 轴产生温和磁吸，平滑对齐卷笔刀孔中心高度 (y = 446)
+        if (dx < 120) {
+          const snapT = 1 - (dx / 120);
+          const yWeight = snapT * snapT;
+          targetY = rawY * (1 - yWeight) + HOLE_TARGET.y * yWeight;
+        }
+      } else {
+        // ---- 阶段 2：插进孔内！严格保持水平 0°，高度绝对锁定在卷笔刀孔中心 446 ----
+        targetAngle = 0;
+        targetY = HOLE_TARGET.y;
+
+        // 【关键保护】：最大插入深度限制！卷笔刀孔在 376，笔尖最多插到 340 (深入 36px)
+        // 整个长长的黄色笔身与橡皮擦始终横卧在卷笔刀右侧，绝不消失，绝不向上乱飞！
+        targetX = Math.max(340, rawX);
+      }
+
+      return { x: targetX, y: targetY, angle: targetAngle };
+    }
+
+    /* ==========================================================
+       多态表情与转动削笔控制引擎
+       ========================================================== */
+    function setFaceModes(mode) {
+      // mode: 'normal' | 'sharpening' | 'sharpened'
+      if (mode === 'sharpening') {
+        // 1. 卷笔刀：开心大嚼吃木头脸，高频震动
+        sharpenerFaceNormal.style.opacity = '0';
+        sharpenerFaceChewing.style.opacity = '1';
+        sharpenerFaceSatisfied.style.opacity = '0';
+        sharpenerGroup.classList.add('sharpener-quiver');
+
+        // 2. 铅笔：自转旋转超嗨晕晕脸，整根铅笔高频微抖自转 (在内部 jitter 层播放，保证不冲刷父级位置)
+        pencilFaceNormal.style.opacity = '0';
+        pencilFaceSpinning.style.opacity = '1';
+        pencilFaceProud.style.opacity = '0';
+        pencilJitterGroup.classList.add('pencil-sharpening-spin');
+
+        // 3. 喷吐螺旋木屑碎花
+        shavingSpray1.style.opacity = '1';
+        shavingSpray2.style.opacity = '1';
+
+        // 4. 铅笔六角棱面高光动态滚动（模拟 3D 轴向自转！）
+        startFacetSpinEffect();
+
+      } else if (mode === 'sharpened') {
+        // 1. 卷笔刀：满足微笑舔嘴
+        sharpenerFaceNormal.style.opacity = '0';
+        sharpenerFaceChewing.style.opacity = '0';
+        sharpenerFaceSatisfied.style.opacity = '1';
+        sharpenerGroup.classList.remove('sharpener-quiver');
+
+        // 2. 铅笔：拔出削好！星星眼超得意骄傲脸
+        pencilFaceNormal.style.opacity = '0';
+        pencilFaceSpinning.style.opacity = '0';
+        pencilFaceProud.style.opacity = '1';
+        pencilJitterGroup.classList.remove('pencil-sharpening-spin');
+
+        // 3. 停止木屑
+        shavingSpray1.style.opacity = '0';
+        shavingSpray2.style.opacity = '0';
+
+        stopFacetSpinEffect();
+
+      } else {
+        // 恢复平常初始默认表情
+        sharpenerFaceNormal.style.opacity = '1';
+        sharpenerFaceChewing.style.opacity = '0';
+        sharpenerFaceSatisfied.style.opacity = '0';
+        sharpenerGroup.classList.remove('sharpener-quiver');
+
+        pencilFaceNormal.style.opacity = '1';
+        pencilFaceSpinning.style.opacity = '0';
+        pencilFaceProud.style.opacity = '0';
+        pencilJitterGroup.classList.remove('pencil-sharpening-spin');
+
+        shavingSpray1.style.opacity = '0';
+        shavingSpray2.style.opacity = '0';
+
+        stopFacetSpinEffect();
+      }
+    }
+
+    // 铅笔黄色六角笔棱高光上下滚动，呈现真实的圆棒轴向自转动效
+    function startFacetSpinEffect() {
+      if (spinAnimationTimer) return;
+      spinAnimationTimer = setInterval(() => {
+        spinPhase += 0.45;
+        const offset = Math.sin(spinPhase) * 11;
+        pencilBodyFacet.setAttribute('y', -7 + offset);
+        pencilBodyFacet.setAttribute('height', Math.max(6, 14 - Math.abs(offset) * 0.4));
+      }, 50);
+    }
+
+    function stopFacetSpinEffect() {
+      if (spinAnimationTimer) {
+        clearInterval(spinAnimationTimer);
+        spinAnimationTimer = null;
+      }
+      pencilBodyFacet.setAttribute('y', '-7');
+      pencilBodyFacet.setAttribute('height', '14');
+    }
+
+    /* ==========================================================
+       削笔与拔出状态控制器
+       ========================================================== */
+    function setSharpenedState(sharpening) {
+      if (isInsideHole === sharpening) return;
+      isInsideHole = sharpening;
+
+      if (sharpening) {
+        // ---- 进入卷笔刀孔内，开始欢快转动削笔！ ----
+        isSharpened = true;
+        leadBlunt.style.opacity = '0';
+        leadSharp.style.opacity = '1';
+
+        setFaceModes('sharpening');
+
+        statusIndicator.className = 'status-indicator sharpening';
+        statusText.textContent = '★ 铅笔正在卷笔刀内高速自转削尖中！表情超嗨！★';
+
+        sound.playInsertSound();
+        setTimeout(() => sound.startWhittlingLoop(), 80);
+
+      } else {
+        // ---- 从卷笔刀拔出孔外 ----
+        sound.stopWhittlingLoop();
+        sound.playExtractSound();
+
+        // 笔尖已削锋利！触发闪光特效与星星眼
+        setFaceModes('sharpened');
+        triggerGlintSparkle();
+
+        statusIndicator.className = 'status-indicator sharpened';
+        statusText.textContent = '✨ 铅笔已削尖锐锋利！露出了骄傲神气的小表情！✨';
+      }
+    }
+
+    // 触发笔尖星星闪光
+    function triggerGlintSparkle() {
+      pencilGlint.classList.remove('sparkle-active');
+      void pencilGlint.offsetWidth; // 触发 reflow
+      pencilGlint.classList.add('sparkle-active');
+      sound.playSparkleSound();
+    }
+
+    /* ==========================================================
+       铅笔姿态与地面长投影同步更新
+       ========================================================== */
+    function applyPencilPose(tipX, tipY, angle) {
+      currentTipX = tipX;
+      currentTipY = tipY;
+      currentAngle = angle;
+
+      // 1. 改变铅笔主体位置与角度
+      pencilMotionGroup.setAttribute('transform', `translate(${tipX}, ${tipY}) rotate(${angle})`);
+
+      // 2. 动态更新地面长投影：
+      // 当角度由 -35.5° 摆平为 0° 时，阴影平滑从斜角投影变为桌面平直投影
+      const rad = angle * Math.PI / 180;
+      const pEndRealX = tipX + 424 * Math.cos(rad);
+      const diagRatio = Math.max(0, Math.min(1, angle / DEFAULT_ANGLE)); // 1=倾斜, 0=水平
+
+      const sTipX = tipX;
+      const sTipY = 492 + (tipY - DEFAULT_TIP.y) * 0.28;
+
+      const sEndX = pEndRealX + 10 + diagRatio * 75;
+      const sEndY = 495 + diagRatio * 50 + (tipY - DEFAULT_TIP.y) * 0.22;
+
+      shadowPath.setAttribute('points', 
+        `${sTipX},${sTipY} ` +
+        `${sEndX},${sEndY} ` +
+        `${sEndX - 10},${sEndY + 10} ` +
+        `${sTipX - 8},${sTipY + 3}`
+      );
+    }
+
+    /* ==========================================================
+       流畅无断触拖拽引擎 (桌面与触屏深度兼容)
+       ========================================================== */
+    pencilLayer.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      sound.init();
+
+      isDragging = true;
+      const svgPt = clientToSvg(e.clientX, e.clientY);
+      dragStartPointer.x = svgPt.x;
+      dragStartPointer.y = svgPt.y;
+      dragStartTip.x = currentTipX;
+      dragStartTip.y = currentTipY;
+    });
+
+    window.addEventListener('pointermove', (e) => {
+      if (!isDragging) return;
+      const svgPt = clientToSvg(e.clientX, e.clientY);
+      const deltaX = svgPt.x - dragStartPointer.x;
+      const deltaY = svgPt.y - dragStartPointer.y;
+
+      const rawTipX = dragStartTip.x + deltaX;
+      const rawTipY = dragStartTip.y + deltaY;
+
+      // 动态计算摆平姿态
+      const pose = computePencilPose(rawTipX, rawTipY);
+
+      // 判定是否插入孔内 (笔尖到达 x <= 376)
+      if (pose.x <= HOLE_TARGET.x) {
+        if (!isInsideHole) {
+          setSharpenedState(true);
+        }
+      } else {
+        // 拔出孔外
+        if (isInsideHole) {
+          setSharpenedState(false);
+        }
+      }
+
+      applyPencilPose(pose.x, pose.y, pose.angle);
+    });
+
+    window.addEventListener('pointerup', () => {
+      if (!isDragging) return;
+      isDragging = false;
+
+      // 如果在孔洞附近或已经进孔：自动稳固吸附在削笔最佳深度 (345px, 446px) 保持持续削笔
+      if (currentTipX <= HOLE_TARGET.x + 45) {
+        animateToPose(345, HOLE_TARGET.y, 0, () => {
+          setSharpenedState(true);
+        });
+      }
+    });
+
+    // 平滑缓动补间动画
+    function animateToPose(toX, toY, toAngle, callback) {
+      const fromX = currentTipX;
+      const fromY = currentTipY;
+      const fromAngle = currentAngle;
+      const duration = 240;
+      const startTime = performance.now();
+
+      function step(now) {
+        const elapsed = now - startTime;
+        const progress = Math.min(1, elapsed / duration);
+        const ease = 1 - Math.pow(1 - progress, 3); // easeOutCubic
+
+        const nextX = fromX + (toX - fromX) * ease;
+        const nextY = fromY + (toY - fromY) * ease;
+        const nextAngle = fromAngle + (toAngle - fromAngle) * ease;
+
+        applyPencilPose(nextX, nextY, nextAngle);
+
+        if (progress < 1) {
+          requestAnimationFrame(step);
+        } else if (callback) {
+          callback();
+        }
+      }
+      requestAnimationFrame(step);
+    }
+
+    /* ==========================================================
+       快捷演示与重置按钮交互
+       ========================================================== */
+    // 1. 自动演示插入削笔
+    document.getElementById('btn-auto-demo').addEventListener('click', () => {
+      sound.init();
+      animateToPose(345, HOLE_TARGET.y, 0, () => {
+        setSharpenedState(true);
+      });
+    });
+
+    // 2. 拔出铅笔
+    document.getElementById('btn-pull-out').addEventListener('click', () => {
+      sound.init();
+      animateToPose(DEFAULT_TIP.x, DEFAULT_TIP.y, DEFAULT_ANGLE, () => {
+        if (isInsideHole) {
+          setSharpenedState(false);
+        }
+      });
+    });
+
+    // 3. 重置为钝笔
+    document.getElementById('btn-reset-blunt').addEventListener('click', () => {
+      sound.init();
+      isSharpened = false;
+      isInsideHole = false;
+      leadBlunt.style.opacity = '1';
+      leadSharp.style.opacity = '0';
+      setFaceModes('normal');
+      animateToPose(DEFAULT_TIP.x, DEFAULT_TIP.y, DEFAULT_ANGLE);
+      statusIndicator.className = 'status-indicator';
+      statusText.textContent = '已重置为钝头铅笔 // 拖动靠近卷笔刀削尖！';
+    });
+  </script>
+</body>
+</html>

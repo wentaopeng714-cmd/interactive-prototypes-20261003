@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Magical Trail Shader</title>
+  
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.js"></script>
+  
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden; /* Prevent scrollbars */
+      background-color: #111; /* Dark background to match */
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+    }
+    canvas {
+      display: block;
+      box-shadow: 0 0 20px rgba(0,0,0,0.8);
+    }
+  </style>
+</head>
+<body>
+
+  <script>
+    // Standard p5.js Vertex Shader for WebGL
+    const vertShader = `
+      attribute vec3 aPosition;
+      attribute vec2 aTexCoord;
+      varying vec2 vTexCoord;
+      
+      void main() {
+        vTexCoord = aTexCoord;
+        vec4 positionVec4 = vec4(aPosition, 1.0);
+        positionVec4.xy = positionVec4.xy * 2.0 - 1.0;
+        gl_Position = positionVec4;
+      }
+    `;
+
+    // The glowing magical fragment shader
+    const fragShader = `
+      #ifdef GL_ES
+      precision highp float;
+      #endif
+
+      uniform vec2 resolution;
+      
+      uniform int trailCount;
+      uniform vec2 trail[15]; // MAX_TRAIL_COUNT
+      
+      uniform int particleCount;
+      uniform vec3 particles[200]; // MAX_PARTICLE_COUNT
+      uniform vec3 colors[200]; // MAX_PARTICLE_COUNT
+      
+      uniform float explosionIntensity;
+
+      void main() {
+        vec2 st = gl_FragCoord.xy / resolution.xy;
+        vec3 color = vec3(0.0);
+
+        // Trail glow
+        for (int i = 0; i < 15; i++) {
+          if (i >= trailCount) break;
+          float d = distance(st, trail[i]);
+          // Brighter trail when explosion happens
+          color += vec3(0.6, 0.8, 1.0) * (0.002 / (d + 0.0001)) * (1.0 + explosionIntensity * 2.0);
+        }
+
+        // Particles glow
+        for (int i = 0; i < 200; i++) {
+          if (i >= particleCount) break;
+          float d = distance(st, particles[i].xy);
+          float pSize = particles[i].z; 
+          
+          // Explosive bright core based on size and intensity
+          color += (colors[i] / 255.0) * (pSize * (0.015 + explosionIntensity * 0.06) / (d + 0.0001));
+        }
+
+        // Add overall screen flash during explosions
+        color += vec3(explosionIntensity * 0.15);
+
+        gl_FragColor = vec4(color, 1.0);
+      }
+    `;
+
+    // Increased particle count safely
+    const MAX_PARTICLE_COUNT = 200;
+    const MAX_TRAIL_COUNT = 15;
+
+    // Dynamic color palettes for explosions
+    const palettes = [
+      ["#E69F66", "#DF843A", "#D8690F", "#B1560D", "#8A430A"], // Fire
+      ["#66E6B0", "#3ADF9A", "#0FD87C", "#0DB165", "#0A8A4D"], // Neon Green
+      ["#669FE6", "#3A84DF", "#0F69D8", "#0D56B1", "#0A438A"], // Plasma Blue
+      ["#E666D9", "#DF3AD1", "#D80FC3", "#B10DA0", "#8A0A7C"], // Void Purple
+      ["#FFFFFF", "#FFF2CC", "#FFE699", "#FFD966", "#FFCC00"]  // Supernova
+    ];
+    
+    let currentColorIndex = 0;
+    let colorScheme = palettes[0];
+    
+    let shaded = true;
+    let theShader;
+    let shaderTexture;
+    let trail = [];
+    let particles = [];
+    
+    // New interaction states
+    let explosionFlash = 0.0; // Controls the screen flash intensity
+    let isAttracting = false; // Black hole suction mode
+
+    class Particle {
+      constructor(x, y, dirX, dirY, isExplosion = false) {
+        this.pos = new p5.Vector(x, y);
+        
+        if (isExplosion) {
+          // 360 degree massive burst
+          let angle = random(TWO_PI);
+          let speed = random(15, 45); // Explosive extreme speed!
+          this.vel = p5.Vector.fromAngle(angle).mult(speed);
+          this.mass = random(5, 12);
+        } else {
+          // Standard directional spark
+          let baseDir = new p5.Vector(dirX, dirY);
+          let angle = baseDir.heading() + random(-1.0, 1.0); // Wider spread
+          let speed = random(8, 25); // Faster sparks
+          this.vel = p5.Vector.fromAngle(angle).mult(speed);
+          this.mass = random(2, 7);
+        }
+        
+        this.colorIndex = floor(random(colorScheme.length));
+      }
+      
+      move() {
+        if (isAttracting) {
+          // Black hole suction effect
+          let target = new p5.Vector(mouseX, mouseY);
+          let force = p5.Vector.sub(target, this.pos);
+          force.normalize();
+          force.mult(2.5); // Suck inwards strongly
+          this.vel.add(force);
+          this.vel.mult(0.92); // High friction so they cluster at the center
+        } else {
+          // Normal turbulence using perlin noise
+          let n = noise(this.pos.x * 0.01, this.pos.y * 0.01, millis() * 0.002);
+          let angle = map(n, 0, 1, -TWO_PI, TWO_PI);
+          let turbulence = p5.Vector.fromAngle(angle).mult(0.8);
+          
+          this.vel.add(turbulence);
+          this.vel.mult(0.93); // Drag to slow them down smoothly
+        }
+        
+        this.pos.add(this.vel);
+        this.mass *= 0.96; // Shrink mass over time
+      }
+    }
+
+    function preload() {
+      theShader = new p5.Shader(this.renderer, vertShader, fragShader);
+    }
+
+    function setup() {
+      pixelDensity(1);
+      let canvas = createCanvas(min(windowWidth, windowHeight), min(windowWidth, windowHeight), WEBGL);
+      canvas.canvas.oncontextmenu = () => false;  // Removes right-click menu
+      noCursor();
+      
+      shaderTexture = createGraphics(width, height, WEBGL);
+      shaderTexture.noStroke();
+    }
+
+    function draw() {
+      background(0);
+      noStroke();
+      
+      // Decay the explosion flash smoothly
+      if (explosionFlash > 0) {
+        explosionFlash *= 0.9; 
+        if(explosionFlash < 0.01) explosionFlash = 0;
+      }
+
+      // Trail logic
+      if (isAttracting) {
+        // Shrink/devour trail when sucking in
+        if (trail.length > 0) trail.splice(0, 1);
+      } else {
+        trail.push([mouseX, mouseY]);
+        if (trail.length > MAX_TRAIL_COUNT) {
+          trail.splice(0, 1);
+        }
+      }
+      
+      // Spawn standard particles on fast movement
+      if (!isAttracting && trail.length > 1 && particles.length < MAX_PARTICLE_COUNT) {
+        let mouse = new p5.Vector(mouseX, mouseY);
+        mouse.sub(pmouseX, pmouseY);
+        if (mouse.mag() > 3) { // Lowered threshold to spawn more easily
+          mouse.normalize();
+          particles.push(new Particle(pmouseX, pmouseY, mouse.x, mouse.y));
+          // Occasionally spawn a double spark for density
+          if (random() > 0.5) particles.push(new Particle(pmouseX, pmouseY, mouse.x, mouse.y));
+        }
+      }
+      
+      // Move and kill particles.
+      for (let i = particles.length - 1; i > -1; i--) {
+        particles[i].move();
+        // Kill if they are too small or moving too slowly
+        if (particles[i].mass < 0.5 || particles[i].vel.mag() < 0.1) {
+          particles.splice(i, 1);
+        }
+      }
+      
+      translate(-width / 2, -height / 2);
+      
+      if (shaded) {
+        // Display shader.
+        shaderTexture.shader(theShader);
+        let data = serializeSketch();
+
+        theShader.setUniform("resolution", [width, height]);
+        theShader.setUniform("trailCount", trail.length);
+        theShader.setUniform("trail", data.trails);
+        theShader.setUniform("particleCount", particles.length);
+        theShader.setUniform("particles", data.particles);
+        theShader.setUniform("colors", data.colors);
+        theShader.setUniform("explosionIntensity", explosionFlash);
+
+        shaderTexture.rect(-width/2, -height/2, width, height); 
+        texture(shaderTexture);
+        
+        rect(0, 0, width, height);
+      } else {
+        // Display points (Debug Mode)
+        stroke(255, 200, 0);
+        strokeWeight(4);
+        for (let i = 0; i < particles.length; i++) {
+          point(particles[i].pos.x, particles[i].pos.y);
+        }
+        
+        stroke(0, 255, 255);
+        strokeWeight(6);
+        for (let i = 0; i < trail.length; i++) {
+          point(trail[i][0], trail[i][1]);
+        }
+      }
+    }
+
+    function mousePressed() {
+      if (mouseButton === RIGHT) {
+        shaded = !shaded; // Toggle Debug wireframe
+      } else if (mouseButton === LEFT) {
+        // Start Black Hole suction effect
+        isAttracting = true;
+      }
+    }
+
+    function mouseReleased() {
+      if (mouseButton === LEFT) {
+        // BOOM! Explosion on release
+        isAttracting = false;
+        explosionFlash = 1.0; // Max flash intensity
+        
+        // Cycle color palette on explosion
+        currentColorIndex = (currentColorIndex + 1) % palettes.length;
+        colorScheme = palettes[currentColorIndex];
+
+        // Spawn massive 360-degree burst
+        let burstCount = min(120, MAX_PARTICLE_COUNT - particles.length);
+        for (let i = 0; i < burstCount; i++) {
+          particles.push(new Particle(mouseX, mouseY, 0, 0, true));
+        }
+      }
+    }
+
+    function serializeSketch() {
+      let data = {"trails": [], "particles": [], "colors": []};
+      
+      for (let i = 0; i < trail.length; i++) {
+        data.trails.push(
+          map(trail[i][0], 0, width, 0.0, 1.0),
+          map(trail[i][1], 0, height, 1.0, 0.0));
+      }
+      
+      for (let i = 0; i < particles.length; i++) {
+        data.particles.push(
+          map(particles[i].pos.x, 0, width, 0.0, 1.0), 
+          map(particles[i].pos.y, 0, height, 1.0, 0.0),
+          particles[i].mass * particles[i].vel.mag() / 80) // Tweaked size scaling
+
+        let itsColor = colorScheme[particles[i].colorIndex];
+        data.colors.push(red(itsColor), green(itsColor), blue(itsColor));
+      }
+      
+      return data;
+    }
+  </script>
+</body>
+</html>

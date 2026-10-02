@@ -1,0 +1,926 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>扁平矢量角色声效交互原型 - FLAT RIG AUDIO</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+    }
+
+    body, html {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #9ca0a6; /* 原图精确哑光灰底色 */
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* 主画布视口：锁定原图 4:3 构图，自适应全屏 */
+    #stage-container {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      max-width: 133.33vh;
+      max-height: 75vw;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    svg#scene {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    /* 交互光标手势与反馈 */
+    .draggable-ctrl {
+      cursor: grab;
+      touch-action: none;
+    }
+
+    .draggable-ctrl:active {
+      cursor: grabbing;
+    }
+
+    .clickable-feature {
+      cursor: pointer;
+      transition: transform 0.1s ease;
+    }
+    .clickable-feature:active {
+      filter: brightness(1.15);
+    }
+
+    /* 右上角音效控制开关 */
+    .audio-toggle-btn {
+      position: absolute;
+      top: 18px;
+      right: 22px;
+      background: rgba(255, 255, 255, 0.35);
+      border: 2px solid rgba(255, 255, 255, 0.8);
+      color: #222222;
+      font-size: 13px;
+      font-weight: 800;
+      padding: 6px 14px;
+      border-radius: 20px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      backdrop-filter: blur(4px);
+      transition: all 0.15s ease;
+      z-index: 20;
+    }
+    .audio-toggle-btn:hover {
+      background: rgba(255, 255, 255, 0.6);
+      transform: scale(1.03);
+    }
+    .audio-toggle-btn.muted {
+      color: #777777;
+      border-color: rgba(255, 255, 255, 0.4);
+      background: rgba(0, 0, 0, 0.15);
+    }
+
+    /* 语音波动指示圈 */
+    .voice-indicator {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #34c759;
+      box-shadow: 0 0 6px #34c759;
+      opacity: 0.2;
+      transition: opacity 0.1s ease, transform 0.1s ease;
+    }
+    .voice-indicator.speaking {
+      opacity: 1;
+      transform: scale(1.35);
+    }
+
+    /* 底部极简交互说明与预设栏 */
+    .control-helper {
+      position: absolute;
+      bottom: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      z-index: 10;
+      pointer-events: auto;
+      max-width: 90%;
+    }
+
+    .preset-btn {
+      background: rgba(255, 255, 255, 0.25);
+      border: 1.5px solid rgba(255, 255, 255, 0.7);
+      color: #ffffff;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      padding: 5px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      backdrop-filter: blur(3px);
+    }
+
+    .preset-btn:hover {
+      background: rgba(255, 255, 255, 0.5);
+      color: #222222;
+    }
+
+    .preset-btn:active {
+      transform: scale(0.94);
+    }
+
+    /* 角色讲话时的微型气泡提示 */
+    #speech-bubble {
+      position: absolute;
+      top: 140px;
+      right: 320px;
+      background: #ffffff;
+      color: #222222;
+      border: 3px solid #22273b;
+      padding: 6px 14px;
+      border-radius: 14px;
+      font-size: 12px;
+      font-weight: 900;
+      letter-spacing: 0.5px;
+      pointer-events: none;
+      opacity: 0;
+      transform: translateY(6px) scale(0.9);
+      transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      z-index: 15;
+    }
+    #speech-bubble.visible {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  </style>
+</head>
+<body>
+
+  <div id="stage-container">
+    <!-- 右上角音效切换按钮 -->
+    <button class="audio-toggle-btn" id="audio-btn" title="点击开关角色音效">
+      <span class="voice-indicator" id="voice-light"></span>
+      <span id="audio-label">AUDIO ON 🔊</span>
+    </button>
+
+    <!-- 角色讲话对白气泡 -->
+    <div id="speech-bubble">"BLAH BLAH..."</div>
+
+    <!-- 纯矢量 SVG 场景：基于 1000 x 750 画布 -->
+    <svg id="scene" viewBox="0 0 1000 750" xmlns="http://www.w3.org/2000/svg">
+      <!-- 哑光灰底色背景 -->
+      <rect width="1000" height="750" fill="#9ca0a6" />
+      <!-- ========================================================
+           画面左侧：极简 UI 控制区
+           ======================================================== -->
+      <g id="ui-controls">
+        <!-- 1. FACE 控制区 -->
+        <text x="85" y="152" fill="#5c6066" font-size="19" font-weight="900" letter-spacing="2" font-family="sans-serif">FACE</text>
+        
+        <!-- FACE 外侧粗白方框 -->
+        <rect id="face-box" x="85" y="172" width="205" height="205" rx="8" ry="8" 
+              fill="none" stroke="#ffffff" stroke-width="14" />
+        
+        <!-- FACE 感应触发热区 -->
+        <rect id="face-hitarea" x="85" y="172" width="205" height="205" fill="transparent" class="draggable-ctrl" />
+        
+        <!-- FACE 红色圆形操纵摇杆 -->
+        <circle id="face-knob" cx="187.5" cy="274.5" r="24" fill="#c72828" class="draggable-ctrl" />
+
+        <!-- 2. MOUTH 控制区 -->
+        <text x="145" y="445" fill="#5c6066" font-size="19" font-weight="900" letter-spacing="2" font-family="sans-serif">MOUTH</text>
+        
+        <!-- MOUTH 白色圆角滑动底槽 -->
+        <rect id="mouth-track" x="85" y="468" width="205" height="18" rx="9" ry="9" fill="#ffffff" />
+        
+        <!-- MOUTH 滑轨感应触发热区 -->
+        <rect id="mouth-hitarea" x="70" y="450" width="235" height="54" fill="transparent" class="draggable-ctrl" />
+        
+        <!-- MOUTH 红色圆形滑块 -->
+        <circle id="mouth-knob" cx="103" cy="477" r="18" fill="#c72828" class="draggable-ctrl" />
+      </g>
+      <!-- ========================================================
+           画面右侧：扁平矢量人物半身像
+           ======================================================== -->
+      <g id="character">
+        <!-- 1. 深色西装剪影 -->
+        <path d="M 328 440 L 1000 440 L 1000 750 L 328 750 Z" fill="#22273b" />
+
+        <!-- 2. 脸部与颈部橙红色块面基底 -->
+        <path d="M 495 180 L 848 180 L 848 750 L 495 750 Z" fill="#ee5749" />
+
+        <!-- 3. 白色衬衫衣领 (几何对称拼合) -->
+        <polygon points="495,525 671,688 671,750 495,750" fill="#ffffff" />
+        <polygon points="848,525 671,688 671,750 848,750" fill="#ffffff" />
+
+        <!-- 4. 红色领带 (可点击弹拽触发音效) -->
+        <polygon id="necktie" points="671,688 625,750 717,750" fill="#a91e24" class="clickable-feature" title="点击拽领带" />
+
+        <!-- 5. 鼻子：红橙深色几何切面 (点击可鸣笛 Boop) -->
+        <polygon id="nose" points="685,195 685,335 645,335 660,195" fill="#dc3b30" class="clickable-feature" title="点击捏鼻子" />
+
+        <!-- 6. 眼睛与下眼袋 -->
+        <!-- 左眼组 -->
+        <g id="left-eye-group" class="clickable-feature" title="点击眨眼">
+          <ellipse cx="575" cy="272" rx="38" ry="18" fill="#f4a9ab" />
+          <ellipse id="left-sclera" cx="575" cy="260" rx="38" ry="24" fill="#ffffff" />
+          <circle id="left-pupil" cx="575" cy="256" r="10" fill="#1b2447" />
+          <rect id="left-eyelid" x="525" y="210" width="100" height="42" fill="#ee5749" />
+        </g>
+
+        <!-- 右眼组 -->
+        <g id="right-eye-group" class="clickable-feature" title="点击眨眼">
+          <ellipse cx="750" cy="272" rx="38" ry="18" fill="#f4a9ab" />
+          <ellipse id="right-sclera" cx="750" cy="260" rx="38" ry="24" fill="#ffffff" />
+          <circle id="right-pupil" cx="745" cy="256" r="10" fill="#1b2447" />
+          <rect id="right-eyelid" x="700" y="210" width="100" height="42" fill="#ee5749" />
+        </g>
+
+        <!-- 7. 夸张橙黄色粗几何眉毛 -->
+        <polygon id="left-eyebrow" points="510,248 638,206 638,228 535,268" fill="#f6c344" />
+        <polygon id="right-eyebrow" points="705,206 835,244 805,266 705,228" fill="#f6c344" />
+
+        <!-- 8. 动态嘴部与下巴 -->
+        <g id="mouth-group">
+          <path id="mouth-fill" d="" fill="#a91e24" />
+          <path id="mouth-teeth" d="" fill="#ffffff" />
+          <path id="mouth-stroke" d="M 590 425 Q 667 416 745 425" fill="none" stroke="#a91e24" stroke-width="7" stroke-linecap="round" />
+          <line id="mouth-corner-l" x1="590" y1="416" x2="590" y2="435" stroke="#a91e24" stroke-width="6" stroke-linecap="round" />
+          <line id="mouth-corner-r" x1="745" y1="416" x2="745" y2="435" stroke="#a91e24" stroke-width="6" stroke-linecap="round" />
+          <path id="chin-crease" d="M 635 446 Q 667 452 700 446" fill="none" stroke="#a91e24" stroke-width="4" stroke-linecap="round" />
+        </g>
+
+        <!-- 9. 橙黄色块面头发 (覆盖在额头和面部上方) -->
+        <path d="M 380 178 
+                 L 535 78 
+                 L 835 72 
+                 L 892 215 
+                 L 848 355 
+                 L 878 385 
+                 L 848 460 
+                 L 848 180 
+                 L 640 180 
+                 L 535 180 
+                 L 495 180 
+                 Z" fill="#f6c344" />
+      </g>
+    </svg>
+
+    <!-- 底部辅助说明与快速预设 -->
+    <div class="control-helper">
+      <button class="preset-btn" onclick="applyPreset('default')">还原默认 [清嗓]</button>
+      <button class="preset-btn" onclick="applyPreset('angry')">严厉深锁 [低哼]</button>
+      <button class="preset-btn" onclick="applyPreset('skeptical')">挑眉怀疑 [疑问]</button>
+      <button class="preset-btn" onclick="applyPreset('pout')">标志嘟嘴 [噗呜]</button>
+      <button class="preset-btn" onclick="applyPreset('talk')">微张讲话 [讲话]</button>
+    </div>
+  </div>
+  <script>
+    /* ==========================================================
+       纯 Web Audio 原生音效合成引擎 (无任何外部音频依赖)
+       ========================================================== */
+    class CharacterVoiceEngine {
+      constructor() {
+        this.ctx = null;
+        this.enabled = true;
+        this.speechTimer = null;
+        this.isSpeaking = false;
+      }
+
+      initContext() {
+        if (!this.ctx) {
+          const AudioContext = window.AudioContext || window.webkitAudioContext;
+          this.ctx = new AudioContext();
+        }
+        if (this.ctx.state === 'suspended') {
+          this.ctx.resume();
+        }
+      }
+
+      toggleAudio() {
+        this.enabled = !this.enabled;
+        return this.enabled;
+      }
+
+      flashVoiceLight() {
+        const light = document.getElementById('voice-light');
+        if (!light) return;
+        light.classList.add('speaking');
+        clearTimeout(this._lightTimer);
+        this._lightTimer = setTimeout(() => {
+          light.classList.remove('speaking');
+        }, 180);
+      }
+
+      // 1. 人物拟真人声元音发音 (Vocal Formant Synthesis)
+      // 使用双带通共振峰滤波器 (Formant F1 / F2) 模拟喉部发音
+      speakVowel(f0 = 110, vowel = 'A', duration = 0.16, gainLevel = 0.22) {
+        if (!this.enabled) return;
+        this.initContext();
+        this.flashVoiceLight();
+
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        osc.type = 'sawtooth'; // 模拟声带声门脉冲波
+        osc.frequency.setValueAtTime(f0, now);
+
+        // 人体元音标准共振峰中心频率 (F1 / F2)
+        const formants = {
+          'A': { f1: 730, f2: 1100 }, // "啊" (讲话、怒吼)
+          'O': { f1: 450, f2: 800 },  // "喔/呜" (嘟嘴、惊讶)
+          'E': { f1: 270, f2: 2200 }, // "诶" (怀疑挑眉)
+          'U': { f1: 300, f2: 700 }   // "哼/嗯" (低沉严厉)
+        };
+        const currentFormant = formants[vowel] || formants['A'];
+
+        // 第 1 共振峰滤波
+        const filter1 = this.ctx.createBiquadFilter();
+        filter1.type = 'bandpass';
+        filter1.frequency.setValueAtTime(currentFormant.f1, now);
+        filter1.Q.setValueAtTime(5.0, now);
+
+        // 第 2 共振峰滤波
+        const filter2 = this.ctx.createBiquadFilter();
+        filter2.type = 'bandpass';
+        filter2.frequency.setValueAtTime(currentFormant.f2, now);
+        filter2.Q.setValueAtTime(6.0, now);
+
+        // 音量包络控制器
+        const gainNode = this.ctx.createGain();
+        gainNode.gain.setValueAtTime(0.001, now);
+        gainNode.gain.linearRampToValueAtTime(gainLevel, now + 0.03);
+        gainNode.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+
+        // 并联共振连接
+        osc.connect(filter1);
+        osc.connect(filter2);
+        filter1.connect(gainNode);
+        filter2.connect(gainNode);
+        gainNode.connect(this.ctx.destination);
+
+        osc.start(now);
+        osc.stop(now + duration + 0.05);
+      }
+      // 2. 严厉/低沉冷哼 ("Hmph!")
+      playSternGrunt() {
+        if (!this.enabled) return;
+        this.initContext();
+        this.flashVoiceLight();
+
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(125, now);
+        osc.frequency.exponentialRampToValueAtTime(65, now + 0.22);
+
+        gain.gain.setValueAtTime(0.3, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.25);
+      }
+
+      // 3. 挑眉怀疑升调哼声 ("Huh?!")
+      playSkepticalWhine() {
+        if (!this.enabled) return;
+        this.initContext();
+        this.flashVoiceLight();
+
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(120, now);
+        osc.frequency.exponentialRampToValueAtTime(240, now + 0.25);
+
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(600, now);
+        filter.frequency.linearRampToValueAtTime(1400, now + 0.25);
+
+        gain.gain.setValueAtTime(0.18, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.26);
+
+        osc.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.26);
+      }
+
+      // 4. 嘟嘴滑稽气泡口哨 ("Poooot~")
+      playPoutSound() {
+        if (!this.enabled) return;
+        this.initContext();
+        this.flashVoiceLight();
+
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(320, now);
+        osc.frequency.linearRampToValueAtTime(180, now + 0.15);
+        osc.frequency.linearRampToValueAtTime(260, now + 0.28);
+
+        gain.gain.setValueAtTime(0.22, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.3);
+      }
+
+      // 5. 快速卡通演讲连珠炮 (连续碎碎念 "Da-ba-da-ba!")
+      playSpeechBabble(count = 4) {
+        if (!this.enabled) return;
+        this.initContext();
+
+        const bubble = document.getElementById('speech-bubble');
+        const speechLines = ['"TREMENDOUS!"', '"HUGE!"', '"BLAH BLAH..."', '"BELIEVE ME!"', '"LISTEN FOLKS!"'];
+        const randomQuote = speechLines[Math.floor(Math.random() * speechLines.length)];
+        bubble.textContent = randomQuote;
+        bubble.classList.add('visible');
+
+        clearTimeout(this._bubbleTimer);
+        this._bubbleTimer = setTimeout(() => {
+          bubble.classList.remove('visible');
+        }, 900);
+
+        const vowels = ['A', 'O', 'A', 'E'];
+        for (let i = 0; i < count; i++) {
+          setTimeout(() => {
+            const pitch = 95 + (i % 2) * 20 + Math.random() * 15;
+            this.speakVowel(pitch, vowels[i % vowels.length], 0.08, 0.25);
+          }, i * 85);
+        }
+      }
+
+      // 6. 点击鼻子专属：卡通喇叭鸣笛 ("HONK!")
+      playNoseHonk() {
+        if (!this.enabled) return;
+        this.initContext();
+        this.flashVoiceLight();
+
+        const now = this.ctx.currentTime;
+        const osc1 = this.ctx.createOscillator();
+        const osc2 = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+
+        osc1.type = 'sawtooth';
+        osc2.type = 'triangle';
+        // 经典卡通喇叭和弦
+        osc1.frequency.setValueAtTime(370, now);
+        osc2.frequency.setValueAtTime(466, now);
+
+        gain.gain.setValueAtTime(0.28, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+
+        osc1.connect(gain);
+        osc2.connect(gain);
+        gain.connect(this.ctx.destination);
+
+        osc1.start(now);
+        osc2.start(now);
+        osc1.stop(now + 0.2);
+        osc2.stop(now + 0.2);
+      }
+
+      // 7. 领带弹拨音效 ("Thwack!")
+      playTieSnap() {
+        if (!this.enabled) return;
+        this.initContext();
+        this.flashVoiceLight();
+
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(480, now);
+        osc.frequency.exponentialRampToValueAtTime(70, now + 0.09);
+
+        gain.gain.setValueAtTime(0.25, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.1);
+      }
+
+      // 8. 眨眼轻盈水滴音 ("Blink!")
+      playBlinkPop() {
+        if (!this.enabled) return;
+        this.initContext();
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(750, now);
+        osc.frequency.exponentialRampToValueAtTime(1100, now + 0.06);
+        gain.gain.setValueAtTime(0.12, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.08);
+      }
+    }
+
+    const voice = new CharacterVoiceEngine();
+    /* ==========================================================
+       状态管理器与交互数学映射
+       ========================================================== */
+    const state = {
+      faceX: 0,
+      faceY: 0,
+      mouthProgress: 25
+    };
+
+    // FACE 控制盒边界定义 (基于 SVG 坐标系)
+    const FACE_BOUNDS = {
+      minX: 85 + 24,
+      maxX: 85 + 205 - 24,
+      minY: 172 + 24,
+      maxY: 172 + 205 - 24,
+      centerX: 85 + 205 / 2,
+      centerY: 172 + 205 / 2
+    };
+
+    // MOUTH 滑轨边界定义
+    const MOUTH_BOUNDS = {
+      minX: 85 + 18,
+      maxX: 85 + 205 - 18,
+      y: 477
+    };
+
+    // 获取 DOM 元素
+    const svgScene = document.getElementById('scene');
+    const faceKnob = document.getElementById('face-knob');
+    const mouthKnob = document.getElementById('mouth-knob');
+    const leftPupil = document.getElementById('left-pupil');
+    const rightPupil = document.getElementById('right-pupil');
+    const leftEyelid = document.getElementById('left-eyelid');
+    const rightEyelid = document.getElementById('right-eyelid');
+    const leftEyebrow = document.getElementById('left-eyebrow');
+    const rightEyebrow = document.getElementById('right-eyebrow');
+    const mouthStroke = document.getElementById('mouth-stroke');
+    const mouthFill = document.getElementById('mouth-fill');
+    const mouthTeeth = document.getElementById('mouth-teeth');
+    const mouthCornerL = document.getElementById('mouth-corner-l');
+    const mouthCornerR = document.getElementById('mouth-corner-r');
+    const chinCrease = document.getElementById('chin-crease');
+    const noseNode = document.getElementById('nose');
+    const necktieNode = document.getElementById('necktie');
+
+    // 屏幕坐标转 SVG 视口真实坐标
+    function getSvgCoordinates(evt) {
+      const pt = svgScene.createSVGPoint();
+      pt.x = evt.clientX;
+      pt.y = evt.clientY;
+      return pt.matrixTransform(svgScene.getScreenCTM().inverse());
+    }
+    /* ==========================================================
+       面部表情与嘴型响应渲染引擎
+       ========================================================== */
+    function updateRig() {
+      const fx = state.faceX;
+      const fy = state.faceY;
+      const mp = state.mouthProgress;
+
+      // 1. 更新 UI 控件视图
+      const knobX = FACE_BOUNDS.centerX + fx * (FACE_BOUNDS.maxX - FACE_BOUNDS.centerX);
+      const knobY = FACE_BOUNDS.centerY + fy * (FACE_BOUNDS.maxY - FACE_BOUNDS.centerY);
+      faceKnob.setAttribute('cx', knobX);
+      faceKnob.setAttribute('cy', knobY);
+
+      const mRatio = mp / 100;
+      const mKnobX = MOUTH_BOUNDS.minX + mRatio * (MOUTH_BOUNDS.maxX - MOUTH_BOUNDS.minX);
+      mouthKnob.setAttribute('cx', mKnobX);
+
+      // 2. 眼睛瞳孔平滑注视
+      const pupilShiftX = fx * 10;
+      const pupilShiftY = fy * 4;
+      leftPupil.setAttribute('cx', 575 + pupilShiftX);
+      leftPupil.setAttribute('cy', 256 + pupilShiftY);
+      rightPupil.setAttribute('cx', 745 + pupilShiftX);
+      rightPupil.setAttribute('cy', 256 + pupilShiftY);
+
+      // 3. 上眼睑高度（控制眯眼程度）
+      const eyelidY = 210 + fy * 6;
+      leftEyelid.setAttribute('y', eyelidY);
+      rightEyelid.setAttribute('y', eyelidY);
+
+      // 4. 夸张几何粗眉形变计算
+      const browOffsetOuterL = fy * 12 - fx * 8;
+      const browOffsetInnerL = fy * 16 + fx * 4;
+      leftEyebrow.setAttribute('points', 
+        `510,${248 + browOffsetOuterL} ` +
+        `638,${206 + browOffsetInnerL} ` +
+        `638,${228 + browOffsetInnerL} ` +
+        `535,${268 + browOffsetOuterL}`
+      );
+
+      const browOffsetInnerR = fy * 16 - fx * 4;
+      const browOffsetOuterR = fy * 12 + fx * 8;
+      rightEyebrow.setAttribute('points', 
+        `705,${206 + browOffsetInnerR} ` +
+        `835,${244 + browOffsetOuterR} ` +
+        `805,${266 + browOffsetOuterR} ` +
+        `705,${228 + browOffsetInnerR}`
+      );
+
+      // 5. 嘴部形态插值计算
+      const sternFrown = fy * 6;
+
+      if (mp <= 35) {
+        // [阶段 1: 紧闭下撇冷笑 -> 经典水平平抿]
+        const t = mp / 35;
+        const midY = 415 + (1 - t) * 8 - sternFrown;
+        const cornerY = 425 + (1 - t) * 10 + sternFrown;
+
+        mouthFill.setAttribute('d', '');
+        mouthTeeth.setAttribute('d', '');
+        mouthStroke.setAttribute('d', `M 590 ${cornerY} Q 667 ${midY} 745 ${cornerY}`);
+        mouthStroke.setAttribute('stroke-width', '7');
+
+        mouthCornerL.setAttribute('x1', '590'); mouthCornerL.setAttribute('y1', cornerY - 8);
+        mouthCornerL.setAttribute('x2', '590'); mouthCornerL.setAttribute('y2', cornerY + 10);
+        mouthCornerR.setAttribute('x1', '745'); mouthCornerR.setAttribute('y1', cornerY - 8);
+        mouthCornerR.setAttribute('x2', '745'); mouthCornerR.setAttribute('y2', cornerY + 10);
+
+        chinCrease.setAttribute('d', `M 635 ${446 + sternFrown} Q 667 ${452 + sternFrown} 700 ${446 + sternFrown}`);
+      } 
+      else if (mp <= 70) {
+        // [阶段 2: 标志性小嘴 O 型噘嘴嘟嘴]
+        const t = (mp - 35) / 35;
+        const leftX = 590 + t * 45;
+        const rightX = 745 - t * 45;
+        const mouthCenterY = 425;
+        const puckerHeight = t * 18;
+
+        const dPucker = `M ${leftX} ${mouthCenterY} ` +
+                        `Q 667 ${mouthCenterY - puckerHeight} ${rightX} ${mouthCenterY} ` +
+                        `Q 667 ${mouthCenterY + puckerHeight} ${leftX} ${mouthCenterY} Z`;
+
+        mouthStroke.setAttribute('d', dPucker);
+        mouthStroke.setAttribute('stroke-width', '6');
+        mouthFill.setAttribute('d', dPucker);
+        mouthTeeth.setAttribute('d', '');
+
+        mouthCornerL.setAttribute('x1', leftX); mouthCornerL.setAttribute('y1', mouthCenterY - 4);
+        mouthCornerL.setAttribute('x2', leftX); mouthCornerL.setAttribute('y2', mouthCenterY + 4);
+        mouthCornerR.setAttribute('x1', rightX); mouthCornerR.setAttribute('y1', mouthCenterY - 4);
+        mouthCornerR.setAttribute('x2', rightX); mouthCornerR.setAttribute('y2', mouthCenterY + 4);
+
+        chinCrease.setAttribute('d', `M 645 448 Q 667 455 690 448`);
+      } 
+      else {
+        // [阶段 3: 微张讲话，露出标志性上排平直门牙]
+        const t = (mp - 70) / 30;
+        const leftX = 615 - t * 15;
+        const rightX = 720 + t * 15;
+        const topY = 420;
+        const bottomY = 432 + t * 24;
+
+        const dMouth = `M ${leftX} ${topY} L ${rightX} ${topY} Q 667 ${bottomY} ${leftX} ${topY} Z`;
+        mouthFill.setAttribute('d', dMouth);
+
+        const teethH = 7 + t * 4;
+        const dTeeth = `M ${leftX + 6} ${topY} L ${rightX - 6} ${topY} L ${rightX - 6} ${topY + teethH} L ${leftX + 6} ${topY + teethH} Z`;
+        mouthTeeth.setAttribute('d', dTeeth);
+
+        mouthStroke.setAttribute('d', dMouth);
+        mouthStroke.setAttribute('stroke-width', '5');
+
+        mouthCornerL.setAttribute('x1', leftX); mouthCornerL.setAttribute('y1', topY - 3);
+        mouthCornerL.setAttribute('x2', leftX); mouthCornerL.setAttribute('y2', topY + 7);
+        mouthCornerR.setAttribute('x1', rightX); mouthCornerR.setAttribute('y1', topY - 3);
+        mouthCornerR.setAttribute('x2', rightX); mouthCornerR.setAttribute('y2', topY + 7);
+
+        chinCrease.setAttribute('d', `M 640 ${458 + t * 6} Q 667 ${465 + t * 6} 695 ${458 + t * 6}`);
+      }
+    }
+    /* ==========================================================
+       拖拽事件监听与动态声效触发
+       ========================================================== */
+    let draggingTarget = null;
+    let lastAudioTick = 0;
+    let lastMouthZone = 'flat';
+
+    function onPointerDown(evt) {
+      voice.initContext();
+      const coords = getSvgCoordinates(evt);
+
+      const inFace = (coords.x >= 75 && coords.x <= 300 && coords.y >= 160 && coords.y <= 390);
+      const inMouth = (coords.x >= 70 && coords.x <= 305 && coords.y >= 440 && coords.y <= 515);
+
+      if (inFace) {
+        draggingTarget = 'face';
+        updateFaceDrag(coords.x, coords.y);
+      } else if (inMouth) {
+        draggingTarget = 'mouth';
+        updateMouthDrag(coords.x);
+      }
+    }
+
+    function onPointerMove(evt) {
+      if (!draggingTarget) return;
+      const coords = getSvgCoordinates(evt);
+
+      if (draggingTarget === 'face') {
+        updateFaceDrag(coords.x, coords.y);
+        throttleFaceAudio();
+      } else if (draggingTarget === 'mouth') {
+        updateMouthDrag(coords.x);
+        checkMouthZoneAudio();
+      }
+    }
+
+    function onPointerUp() {
+      if (draggingTarget === 'face') {
+        // 松手时根据最终表情发出肯定声或冷哼
+        if (state.faceY > 0.4) {
+          voice.playSternGrunt();
+        } else if (state.faceY < -0.4) {
+          voice.playSkepticalWhine();
+        }
+      } else if (draggingTarget === 'mouth') {
+        if (state.mouthProgress > 75) {
+          voice.playSpeechBabble(3);
+        } else if (state.mouthProgress > 50 && state.mouthProgress <= 70) {
+          voice.playPoutSound();
+        }
+      }
+      draggingTarget = null;
+    }
+
+    function updateFaceDrag(x, y) {
+      const clampedX = Math.max(FACE_BOUNDS.minX, Math.min(FACE_BOUNDS.maxX, x));
+      const clampedY = Math.max(FACE_BOUNDS.minY, Math.min(FACE_BOUNDS.maxY, y));
+
+      state.faceX = (clampedX - FACE_BOUNDS.centerX) / (FACE_BOUNDS.maxX - FACE_BOUNDS.centerX);
+      state.faceY = (clampedY - FACE_BOUNDS.centerY) / (FACE_BOUNDS.maxY - FACE_BOUNDS.centerY);
+      updateRig();
+    }
+
+    function updateMouthDrag(x) {
+      const clampedX = Math.max(MOUTH_BOUNDS.minX, Math.min(MOUTH_BOUNDS.maxX, x));
+      const ratio = (clampedX - MOUTH_BOUNDS.minX) / (MOUTH_BOUNDS.maxX - MOUTH_BOUNDS.minX);
+      state.mouthProgress = ratio * 100;
+      updateRig();
+    }
+
+    // 拖动 FACE 过程中的动态低鸣与音调变化
+    function throttleFaceAudio() {
+      const now = Date.now();
+      if (now - lastAudioTick > 140) {
+        lastAudioTick = now;
+        // 根据 Y 坐标动态计算声调 (向下低沉，向上高亢)
+        const f0 = 90 - state.faceY * 35;
+        const vowel = state.faceY > 0 ? 'U' : 'E';
+        voice.speakVowel(f0, vowel, 0.09, 0.12);
+      }
+    }
+
+    // 拖动 MOUTH 跨越不同形态区间时触发不同声效
+    function checkMouthZoneAudio() {
+      let currentZone = 'flat';
+      if (state.mouthProgress < 20) currentZone = 'frown';
+      else if (state.mouthProgress > 50 && state.mouthProgress <= 72) currentZone = 'pout';
+      else if (state.mouthProgress > 75) currentZone = 'talk';
+
+      if (currentZone !== lastMouthZone) {
+        lastMouthZone = currentZone;
+        if (currentZone === 'talk') {
+          voice.speakVowel(135, 'A', 0.1, 0.2);
+        } else if (currentZone === 'pout') {
+          voice.playPoutSound();
+        } else if (currentZone === 'frown') {
+          voice.speakVowel(80, 'U', 0.12, 0.18);
+        }
+      }
+    }
+
+    window.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointercancel', onPointerUp);
+    /* ==========================================================
+       角色各部位点击彩蛋音效
+       ========================================================== */
+    // 点击捏鼻子
+    noseNode.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      voice.playNoseHonk();
+      // 鼻子轻微弹性微缩动效
+      noseNode.style.transformOrigin = "665px 265px";
+      noseNode.style.transform = "scale(1.15)";
+      setTimeout(() => { noseNode.style.transform = "scale(1)"; }, 150);
+    });
+
+    // 点击弹拉领带
+    necktieNode.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      voice.playTieSnap();
+      necktieNode.style.transformOrigin = "671px 688px";
+      necktieNode.style.transform = "rotate(4deg) scale(1.05)";
+      setTimeout(() => { necktieNode.style.transform = "rotate(0deg) scale(1)"; }, 120);
+    });
+
+    // 点击双眼触发眨眼与提示音
+    const eyes = [document.getElementById('left-eye-group'), document.getElementById('right-eye-group')];
+    eyes.forEach(eye => {
+      eye.addEventListener('pointerdown', (e) => {
+        e.stopPropagation();
+        voice.playBlinkPop();
+        // 瞬间闭眼动效
+        leftEyelid.setAttribute('y', 238);
+        rightEyelid.setAttribute('y', 238);
+        setTimeout(() => { updateRig(); }, 160);
+      });
+    });
+
+    // 右上角声音开关
+    const audioBtn = document.getElementById('audio-btn');
+    const audioLabel = document.getElementById('audio-label');
+    audioBtn.addEventListener('click', () => {
+      const isEnabled = voice.toggleAudio();
+      if (isEnabled) {
+        audioBtn.classList.remove('muted');
+        audioLabel.textContent = 'AUDIO ON 🔊';
+        voice.speakVowel(120, 'A', 0.12, 0.2);
+      } else {
+        audioBtn.classList.add('muted');
+        audioLabel.textContent = 'MUTED 🔇';
+      }
+    });
+
+    /* ==========================================================
+       快速表情预设与专属声效
+       ========================================================== */
+    function applyPreset(name) {
+      voice.initContext();
+      switch(name) {
+        case 'default':
+          state.faceX = 0;
+          state.faceY = 0;
+          state.mouthProgress = 25;
+          voice.speakVowel(100, 'U', 0.16, 0.2);
+          break;
+        case 'angry':
+          state.faceX = 0;
+          state.faceY = 0.85;
+          state.mouthProgress = 0;
+          voice.playSternGrunt();
+          break;
+        case 'skeptical':
+          state.faceX = 0.7;
+          state.faceY = -0.6;
+          state.mouthProgress = 30;
+          voice.playSkepticalWhine();
+          break;
+        case 'pout':
+          state.faceX = -0.15;
+          state.faceY = 0.2;
+          state.mouthProgress = 62;
+          voice.playPoutSound();
+          break;
+        case 'talk':
+          state.faceX = 0.25;
+          state.faceY = -0.3;
+          state.mouthProgress = 95;
+          voice.playSpeechBabble(4);
+          break;
+      }
+      updateRig();
+    }
+
+    // 初始化渲染
+    updateRig();
+  </script>
+</body>
+</html>

@@ -1,0 +1,1092 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>引体向上壮汉 - 真正向上发力交互原型</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+    }
+
+    body, html {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #faa819; /* 原图精确明亮橙黄底色 */
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* 主舞台视口：保持 4:3 比例，全屏自适应居中 */
+    #stage-container {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      max-width: 133.33vh;
+      max-height: 75vw;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    svg#scene {
+      width: 100%;
+      height: 100%;
+      display: block;
+      overflow: visible;
+    }
+
+    /* 壮汉整体拖拽手势 */
+    #interactive-character {
+      cursor: grab;
+      touch-action: none;
+    }
+
+    #interactive-character:active {
+      cursor: grabbing;
+    }
+
+    /* 右侧力量滑轨 */
+    .slider-track-wrap {
+      position: absolute;
+      right: 28px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 48px;
+      height: 320px;
+      background: rgba(0, 0, 0, 0.08);
+      border-radius: 24px;
+      padding: 8px 6px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: space-between;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08);
+      z-index: 15;
+    }
+
+    .slider-rail {
+      position: relative;
+      width: 10px;
+      height: 240px;
+      background: rgba(0, 0, 0, 0.16);
+      border-radius: 5px;
+      cursor: pointer;
+    }
+
+    .slider-bar-fill {
+      position: absolute;
+      bottom: 0;
+      width: 100%;
+      height: 0%;
+      background: linear-gradient(to top, #ff9f38, #ff3b30);
+      border-radius: 5px;
+      transition: height 0.05s linear;
+    }
+
+    .slider-handle {
+      position: absolute;
+      left: 50%;
+      bottom: 0%;
+      transform: translate(-50%, 50%);
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: #ffffff;
+      box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3);
+      cursor: grab;
+      touch-action: none;
+    }
+
+    .slider-handle:active {
+      cursor: grabbing;
+      transform: translate(-50%, 50%) scale(1.1);
+    }
+
+    /* 顶部控制栏 */
+    .top-controls {
+      position: absolute;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      z-index: 20;
+    }
+
+    .pill-btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(255, 255, 255, 0.85);
+      backdrop-filter: blur(12px);
+      border: 1.5px solid rgba(255, 255, 255, 0.95);
+      border-radius: 20px;
+      padding: 7px 16px;
+      font-size: 12px;
+      font-weight: 800;
+      color: #1b1c1d;
+      cursor: pointer;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+      transition: all 0.18s ease;
+    }
+
+    .pill-btn:hover {
+      background: #ffffff;
+      transform: translateY(-1px);
+    }
+
+    .pill-btn:active {
+      transform: scale(0.96);
+    }
+
+    .rep-counter {
+      background: #1b1c1d;
+      color: #ffffff;
+      border-radius: 12px;
+      padding: 2px 8px;
+      font-size: 11px;
+      font-weight: 900;
+    }
+
+    /* 底部档位指示器卡片 */
+    .dock-card {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(255, 255, 255, 0.88);
+      backdrop-filter: blur(14px);
+      border-radius: 18px;
+      padding: 10px 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      box-shadow: 0 6px 24px rgba(0, 0, 0, 0.1);
+      z-index: 15;
+    }
+
+    .chip-tab {
+      background: #f0f0f0;
+      border: none;
+      padding: 5px 12px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 800;
+      color: #555;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .chip-tab.active {
+      background: #1b1c1d;
+      color: #fff;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 顶部快速操作与音频开关 -->
+  <div class="top-controls">
+    <button class="pill-btn" id="btn-audio" title="点击开关或试听音效">
+      <span id="audio-dot" class="w-2 h-2 rounded-full bg-emerald-500 shadow-sm animate-pulse"></span>
+      <span id="audio-label">🔊 音效已开启 (点击试听)</span>
+    </button>
+    <button class="pill-btn" id="btn-auto-workout">
+      <span>🏋️ 自动引体向上模式</span>
+      <span class="rep-counter" id="rep-display">0 次</span>
+    </button>
+  </div>
+
+  <!-- 右侧竖向力量拉杆：向上推是引体向上发力！ -->
+  <div class="slider-track-wrap" id="slider-wrap">
+    <span class="text-[10px] font-black text-slate-800 tracking-wider">过杠</span>
+    <div class="slider-rail" id="slider-rail">
+      <div class="slider-bar-fill" id="slider-fill"></div>
+      <div class="slider-handle" id="slider-handle"></div>
+    </div>
+    <span class="text-[10px] font-black text-slate-800 tracking-wider">悬垂</span>
+  </div>
+
+  <div id="stage-container">
+    <svg id="scene" viewBox="0 0 1000 800" xmlns="http://www.w3.org/2000/svg">
+      <!-- 1. 明丽橙黄纯平背景 -->
+      <rect width="1000" height="800" fill="#faa819" />
+
+      <!-- ========================================================
+           2. 极限爆发：力量警报红色冲击波纹 (Shockwaves)
+           ======================================================== -->
+      <g id="shockwaves-layer" opacity="0" pointer-events="none">
+        <circle id="shock-1" cx="500" cy="200" r="170" fill="none" stroke="#ff3838" stroke-width="12" opacity="0.35" />
+        <circle id="shock-2" cx="500" cy="200" r="250" fill="none" stroke="#ff3838" stroke-width="8" opacity="0.25" stroke-dasharray="16 12" />
+        <circle id="shock-3" cx="500" cy="200" r="330" fill="none" stroke="#ff3838" stroke-width="5" opacity="0.15" />
+      </g>
+
+      <!-- ========================================================
+           3. 黑色单杠后层 (贯穿整个画面，Y = 220)
+           ======================================================== -->
+      <rect id="pullup-bar-back" x="0" y="214" width="1000" height="16" fill="#1b1c1d" />
+
+      <!-- ========================================================
+           4. 引体向上壮汉核心角色骨骼 (Cohesive Character Rig)
+           手腕永远紧扣在单杠上，躯干随着引体向上拔升，双臂顺滑屈肘！
+           ======================================================== -->
+      <g id="interactive-character">
+        
+        <!-- A. 屈伸肌肉双臂底层 (无缝连接抓握手与肩膀) -->
+        <g id="arms-layer">
+          <!-- 左手臂：从左手 (400, 222) 连至手肘，再到左肩 -->
+          <path id="arm-path-l" d="" fill="none" stroke="#f06497" stroke-width="48" stroke-linecap="round" stroke-linejoin="round" />
+          <!-- 右手臂：从右手 (600, 222) 连至手肘，再到右肩 -->
+          <path id="arm-path-r" d="" fill="none" stroke="#f06497" stroke-width="48" stroke-linecap="round" stroke-linejoin="round" />
+
+          <!-- 二头肌与前臂充血青筋 (发力时浮现) -->
+          <g id="bicep-veins" opacity="0" pointer-events="none">
+            <path id="bicep-vein-l" d="" fill="none" stroke="#2575b0" stroke-width="4" stroke-linecap="round" />
+            <path id="bicep-vein-r" d="" fill="none" stroke="#2575b0" stroke-width="4" stroke-linecap="round" />
+          </g>
+        </g>
+
+        <!-- B. 随拉力向上提升的身体总装群组 (完全无断裂统一层次) -->
+        <g id="body-lift-group" transform="translate(0, 0)">
+          
+          <!-- (1) 躯干与服装组 -->
+          <g id="torso-clothing-group">
+            <!-- 纯白运动工字无袖背心 -->
+            <path id="shirt-body" d="M 390 355 
+                     L 435 348 
+                     L 435 390 
+                     L 565 390 
+                     L 565 348 
+                     L 610 355 
+                     L 600 480 
+                     L 400 480 
+                     Z" fill="#ffffff" />
+
+            <!-- 露出的粉色肚皮 (严密接缝在背心下方) -->
+            <path id="belly-strip" d="M 400 480 
+                     L 600 480 
+                     L 600 514 
+                     C 600 524, 400 524, 400 514 
+                     Z" fill="#f06497" />
+
+            <!-- 肚脐小凹点 -->
+            <circle id="belly-button" cx="500" cy="505" r="4.5" fill="#d94b7e" />
+          </g>
+
+          <!-- (2) 饱满亮蓝短裤与交叉小腿 -->
+          <g id="shorts-and-legs">
+            <!-- 碗状饱满亮蓝短裤 (#1779cb) -->
+            <path d="M 400 512 
+                     C 400 512, 415 580, 500 580 
+                     C 585 580, 600 512, 600 512 
+                     Z" fill="#1779cb" />
+
+            <!-- 原图经典的可爱交叉小短腿 -->
+            <path d="M 474 572 
+                     L 490 600 
+                     L 452 632 
+                     L 444 624 
+                     L 472 596 
+                     Z" fill="#1779cb" />
+
+            <path d="M 526 572 
+                     L 510 600 
+                     L 548 632 
+                     L 556 624 
+                     L 528 596 
+                     Z" fill="#1779cb" />
+
+            <!-- 红鞋小折角 -->
+            <polygon points="452,632 444,624 452,618" fill="#f06497" />
+            <polygon points="548,632 556,624 548,618" fill="#f06497" />
+          </g>
+
+          <!-- (3) 壮汉头部系统 (头部与下巴完好相连，下巴拉过杠杆) -->
+          <g id="head-system">
+            <!-- 脸部与下巴粉色基础块面 (下巴圆润厚实) -->
+            <rect id="face-base" x="420" y="240" width="160" height="135" rx="32" fill="#f06497" />
+
+            <!-- 两侧半圆小耳朵 -->
+            <ellipse id="ear-l" cx="414" cy="316" rx="11" ry="14" fill="#f06497" />
+            <ellipse id="ear-r" cx="586" cy="316" rx="11" ry="14" fill="#f06497" />
+
+            <!-- 纯黑几何发型 (左直右斜原图刘海) -->
+            <path d="M 418 280 
+                     L 440 280 
+                     L 440 240 
+                     L 580 240 
+                     L 580 280 
+                     L 570 308 
+                     L 570 280 
+                     L 422 280 
+                     Z" fill="#1b1c1d" />
+
+            <!-- 额头复古蓝白运动发带 (白底 + 天蓝条纹) -->
+            <rect x="420" y="286" width="160" height="24" fill="#ffffff" rx="4" />
+            <rect x="420" y="293" width="160" height="10" fill="#3298db" />
+
+            <!-- 额头凸起跳动的怒筋 (拉力极大时爆发) -->
+            <path id="forehead-vein" d="M 445 272 Q 452 264 458 270 Q 464 260 470 268" 
+                  fill="none" stroke="#2575b0" stroke-width="3.5" stroke-linecap="round" opacity="0" />
+
+            <!-- 眼睛五官组 -->
+            <g id="eyes-group">
+              <!-- 初始淡定药丸黑眼 -->
+              <g id="eyes-normal">
+                <rect x="458" y="314" width="15" height="24" rx="7.5" fill="#1b1c1d" />
+                <rect x="527" y="314" width="15" height="24" rx="7.5" fill="#1b1c1d" />
+              </g>
+
+              <!-- 发力皱眉 -->
+              <g id="brows-frown" opacity="0">
+                <rect x="454" y="306" width="22" height="6" rx="3" fill="#1b1c1d" transform="rotate(18 465 309)" />
+                <rect x="524" y="306" width="22" height="6" rx="3" fill="#1b1c1d" transform="rotate(-18 535 309)" />
+              </g>
+
+              <!-- 极限过杠时的暴突圆眼 -->
+              <g id="eyes-bulge" opacity="0">
+                <circle cx="465" cy="326" r="14" fill="#ffffff" />
+                <circle cx="535" cy="326" r="14" fill="#ffffff" />
+                <circle id="pupil-l" cx="465" cy="326" r="5.5" fill="#1b1c1d" />
+                <circle id="pupil-r" cx="535" cy="326" r="5.5" fill="#1b1c1d" />
+              </g>
+            </g>
+
+            <!-- 桃粉色圆润大鼻头 -->
+            <path d="M 500 306 
+                     C 490 326, 486 340, 500 342 
+                     C 514 340, 510 326, 500 306 
+                     Z" fill="#ff4d88" />
+
+            <!-- 嘴巴与气派黑色八字大胡子 (Handlebar Mustache) -->
+            <g id="mouth-mustache-group">
+              <!-- 咬牙坚持白牙齿 (半程中度拉力) -->
+              <g id="teeth-clench" opacity="0" transform="translate(480, 350)">
+                <rect x="0" y="0" width="40" height="11" rx="3" fill="#ffffff" />
+                <line x1="10" y1="0" x2="10" y2="11" stroke="#cccccc" stroke-width="1.5" />
+                <line x1="20" y1="0" x2="20" y2="11" stroke="#cccccc" stroke-width="1.5" />
+                <line x1="30" y1="0" x2="30" y2="11" stroke="#cccccc" stroke-width="1.5" />
+              </g>
+
+              <!-- 过杠暴怒大张嘴 (极限拉力) -->
+              <g id="mouth-scream" opacity="0" transform="translate(476, 345)">
+                <path d="M 0 5 Q 24 -4 48 5 Q 48 24 24 24 Q 0 24 0 5 Z" fill="#4d101d" />
+                <rect x="6" y="4" width="36" height="5" rx="2" fill="#ffffff" />
+              </g>
+
+              <!-- 原图招牌浓密大胡子 (覆盖在嘴上方) -->
+              <path d="M 476 348 
+                       C 462 348, 442 360, 442 384 
+                       L 468 384 
+                       C 468 368, 480 360, 492 360 
+                       L 508 360 
+                       C 520 360, 532 368, 532 384 
+                       L 558 384 
+                       C 558 360, 538 348, 524 348 
+                       Z" fill="#1b1c1d" />
+
+              <!-- 下巴微露肉垫 -->
+              <rect id="chin-cushion" x="478" y="368" width="44" height="20" rx="8" fill="#f06497" />
+            </g>
+
+            <!-- 汗水滴落动效 -->
+            <g id="sweat-drops" opacity="0">
+              <path d="M 432 308 Q 426 318 432 324 Q 438 318 432 308 Z" fill="#68c6ff" />
+              <path d="M 570 312 Q 564 322 570 328 Q 576 322 570 312 Z" fill="#68c6ff" />
+            </g>
+          </g>
+        </g>
+
+        <!-- ========================================================
+             5. 黑色单杠前层 + 双手紧扣掌指
+             横杆穿过手掌，双手稳固扣在最前层！
+             ======================================================== -->
+        <g id="hands-front-bar-layer" pointer-events="none">
+          <!-- 左手紧扣横杆 (X = 400) -->
+          <rect id="hand-l" x="380" y="200" width="42" height="46" rx="16" fill="#f06497" />
+          <!-- 右手紧扣横杆 (X = 600) -->
+          <rect id="hand-r" x="578" y="200" width="42" height="46" rx="16" fill="#f06497" />
+          
+          <!-- 手指扣在横杆前部的指节光影 -->
+          <rect x="380" y="214" width="42" height="16" rx="8" fill="#e25688" />
+          <rect x="578" y="214" width="42" height="16" rx="8" fill="#e25688" />
+        </g>
+      </g>
+
+      <!-- ========================================================
+           6. 漫画拟声词音效气泡 (Comic SFX Bubble)
+           根据向上拉升的高度动态浮现出“嘿！”、“嗯——！！”、“啊——！！！”
+           ======================================================== -->
+      <g id="sfx-bubble" opacity="0" pointer-events="none" transform="translate(630, 170)">
+        <polygon points="15,48 30,36 45,45" fill="#ffffff" />
+        <rect x="20" y="0" width="140" height="48" rx="24" fill="#ffffff" filter="drop-shadow(0 4px 10px rgba(0,0,0,0.15))" />
+        <text id="sfx-text" x="90" y="32" text-anchor="middle" font-size="20" font-weight="900" fill="#1b1c1d">嘿！</text>
+      </g>
+    </svg>
+
+    <!-- 底部状态指示牌与多档交互按钮 -->
+    <div class="dock-card">
+      <div class="flex gap-2">
+        <button class="chip-tab active" id="tab-0" onclick="setPullupPreset(0)">01 悬垂待机 (0%)</button>
+        <button class="chip-tab" id="tab-1" onclick="setPullupPreset(0.35)">02 发力起步 (35%)</button>
+        <button class="chip-tab" id="tab-2" onclick="setPullupPreset(0.70)">03 咬牙半程 (70%)</button>
+        <button class="chip-tab" id="tab-3" onclick="setPullupPreset(1.0)">04 下巴过杠 (100%)</button>
+      </div>
+      <div class="flex items-center gap-3 text-xs font-bold text-slate-800">
+        <span class="px-2 py-0.5 rounded-md text-[10px] font-black bg-amber-400 text-slate-900" id="badge-level">悬垂待机</span>
+        <span id="badge-hint">向上拖动壮汉身体或推升右侧滑块，引体向上拉过单杠！</span>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    /* ==========================================================
+       真实多层音效引擎：真人语音 + 金属铁杠受力 + 心跳轰鸣 + 粗重喘息
+       ========================================================== */
+    class RealPullupAudioEngine {
+      constructor() {
+        this.ctx = null;
+        this.muted = false;
+        this.lastLevel = 0;
+        this.heartbeatTimer = null;
+        this.currentTension = 0;
+        this.speechReady = 'speechSynthesis' in window;
+      }
+
+      init() {
+        if (!this.ctx) {
+          const AudioContext = window.AudioContext || window.webkitAudioContext;
+          this.ctx = new AudioContext();
+        }
+        if (this.ctx.state === 'suspended') {
+          this.ctx.resume();
+        }
+      }
+
+      toggleMute() {
+        this.muted = !this.muted;
+        if (this.muted) {
+          this.stopHeartbeat();
+          if (this.speechReady) window.speechSynthesis.cancel();
+        }
+        return this.muted;
+      }
+
+      /* 1. 真实真人发力配音 (Web Speech 纯本地真人发音) */
+      speakVoice(text, pitch = 0.75, rate = 1.15) {
+        if (this.muted) return;
+        if (this.speechReady) {
+          try {
+            window.speechSynthesis.cancel();
+            const utter = new SpeechSynthesisUtterance(text);
+            utter.lang = 'zh-CN';
+            utter.pitch = pitch; // 壮汉深厚喉音
+            utter.rate = rate;
+            utter.volume = 1.0;
+            window.speechSynthesis.speak(utter);
+          } catch (e) {}
+        }
+      }
+
+      /* 2. 金属单杠受力紧绷呻吟吱嘎声 (Heavy Bar Strain Creak) */
+      playBarStrain() {
+        if (this.muted) return;
+        this.init();
+        if (!this.ctx) return;
+        const now = this.ctx.currentTime;
+
+        const osc = this.ctx.createOscillator();
+        const filter = this.ctx.createBiquadFilter();
+        const gain = this.ctx.createGain();
+
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(520, now);
+        osc.frequency.linearRampToValueAtTime(340, now + 0.08);
+        osc.frequency.linearRampToValueAtTime(680, now + 0.16);
+
+        filter.type = 'bandpass';
+        filter.frequency.setValueAtTime(1400, now);
+        filter.Q.setValueAtTime(6.0, now);
+
+        gain.gain.setValueAtTime(0.001, now);
+        gain.gain.linearRampToValueAtTime(0.2, now + 0.03);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+
+        osc.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.2);
+      }
+
+      /* 3. 沉重粗喘呼气声 (Heavy Breath Exhale) */
+      playBreath() {
+        if (this.muted) return;
+        this.init();
+        if (!this.ctx) return;
+        const now = this.ctx.currentTime;
+
+        const bufferSize = Math.floor(this.ctx.sampleRate * 0.25);
+        const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+          data[i] = Math.random() * 2 - 1;
+        }
+
+        const noise = this.ctx.createBufferSource();
+        noise.buffer = buffer;
+
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'bandpass';
+        filter.frequency.setValueAtTime(750, now);
+        filter.frequency.exponentialRampToValueAtTime(420, now + 0.25);
+        filter.Q.setValueAtTime(2.2, now);
+
+        const gain = this.ctx.createGain();
+        gain.gain.setValueAtTime(0.001, now);
+        gain.gain.linearRampToValueAtTime(0.22, now + 0.04);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+
+        noise.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.ctx.destination);
+        noise.start(now);
+      }
+
+      /* 4. 次低频真实心跳搏动 (Deep Sub-bass Heartbeat Thump-Thump) */
+      playSingleHeartbeat(volume = 0.25) {
+        if (this.muted) return;
+        this.init();
+        if (!this.ctx) return;
+        const now = this.ctx.currentTime;
+
+        // 第一声心跳 (Lub)
+        const osc1 = this.ctx.createOscillator();
+        const gain1 = this.ctx.createGain();
+        osc1.type = 'sine';
+        osc1.frequency.setValueAtTime(75, now);
+        osc1.frequency.exponentialRampToValueAtTime(42, now + 0.09);
+        gain1.gain.setValueAtTime(volume, now);
+        gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+        osc1.connect(gain1);
+        gain1.connect(this.ctx.destination);
+        osc1.start(now);
+        osc1.stop(now + 0.11);
+
+        // 第二声心跳 (Dub)
+        const osc2 = this.ctx.createOscillator();
+        const gain2 = this.ctx.createGain();
+        osc2.type = 'sine';
+        osc2.frequency.setValueAtTime(65, now + 0.12);
+        osc2.frequency.exponentialRampToValueAtTime(36, now + 0.22);
+        gain2.gain.setValueAtTime(volume * 0.8, now + 0.12);
+        gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.23);
+        osc2.connect(gain2);
+        gain2.connect(this.ctx.destination);
+        osc2.start(now + 0.12);
+        osc2.stop(now + 0.24);
+      }
+
+      /* 5. 下巴过杠胜利金属金钟大三和弦 (Triumphant Metal Gong Chime) */
+      playVictoryGong() {
+        if (this.muted) return;
+        this.init();
+        if (!this.ctx) return;
+        const now = this.ctx.currentTime;
+
+        // C大调金光和弦: C5(523Hz), E5(659Hz), G5(784Hz), C6(1046Hz)
+        const freqs = [523.25, 659.25, 783.99, 1046.5];
+        freqs.forEach((freq, idx) => {
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(freq, now + idx * 0.03);
+
+          gain.gain.setValueAtTime(0.001, now + idx * 0.03);
+          gain.gain.linearRampToValueAtTime(0.2, now + idx * 0.03 + 0.02);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.03 + 0.7);
+
+          osc.connect(gain);
+          gain.connect(this.ctx.destination);
+          osc.start(now + idx * 0.03);
+          osc.stop(now + idx * 0.03 + 0.75);
+        });
+      }
+
+      /* 6. 随着拉力动态调整心跳频率与喘息 */
+      updateHeartbeatLoop(tension) {
+        this.currentTension = tension;
+        if (this.muted || tension < 0.35) {
+          this.stopHeartbeat();
+          return;
+        }
+
+        if (!this.heartbeatTimer) {
+          const loop = () => {
+            if (this.currentTension < 0.35 || this.muted) {
+              this.stopHeartbeat();
+              return;
+            }
+            // 越接近 1.0，心跳频率越快 (850ms -> 380ms)
+            const interval = 850 - (this.currentTension - 0.35) * 650;
+            const vol = 0.2 + this.currentTension * 0.2;
+            this.playSingleHeartbeat(vol);
+            this.heartbeatTimer = setTimeout(loop, Math.max(350, interval));
+          };
+          loop();
+        }
+      }
+
+      stopHeartbeat() {
+        if (this.heartbeatTimer) {
+          clearTimeout(this.heartbeatTimer);
+          this.heartbeatTimer = null;
+        }
+      }
+
+      /* 7. 测试试听所有音效 */
+      testSoundDemo() {
+        this.init();
+        this.playBarStrain();
+        setTimeout(() => this.playBreath(), 120);
+        setTimeout(() => this.playSingleHeartbeat(0.35), 260);
+        setTimeout(() => {
+          this.speakVoice('嘿！引体向上，开练！', 0.8, 1.1);
+          this.playVictoryGong();
+        }, 450);
+      }
+    }
+
+    const sound = new RealPullupAudioEngine();
+    
+    // 全局任意点击立即激活音频上下文
+    window.addEventListener('pointerdown', () => sound.init(), { once: true });
+    window.addEventListener('click', () => sound.init(), { once: true });
+
+    // 顶部音效开关与试听
+    const audioBtn = document.getElementById('btn-audio');
+    const audioDot = document.getElementById('audio-dot');
+    const audioLabel = document.getElementById('audio-label');
+    audioBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      sound.init();
+      if (sound.muted) {
+        sound.toggleMute();
+        audioDot.className = 'w-2 h-2 rounded-full bg-emerald-500 shadow-sm animate-pulse';
+        audioLabel.textContent = '🔊 音效已开启 (点击试听)';
+        sound.testSoundDemo();
+      } else {
+        // 如果已开启，点击直接测试播放一次发力试听
+        sound.testSoundDemo();
+      }
+    });
+    /* ==========================================================
+       状态管理器与 DOM 引用
+       ========================================================== */
+    const state = {
+      progress: 0,       // 0.0 (完全悬垂) ~ 1.0 (下巴过杠巅峰)
+      isDragging: false,
+      dragSource: null,  // 'character' | 'slider'
+      startY: 0,
+      startProgress: 0,
+      autoWorkoutActive: false,
+      workoutTimer: null,
+      repCount: 0,
+      hasCountedCurrentRep: false
+    };
+
+    // DOM 元素
+    const interactiveCharacter = document.getElementById('interactive-character');
+    const bodyLiftGroup = document.getElementById('body-lift-group');
+    const armPathL = document.getElementById('arm-path-l');
+    const armPathR = document.getElementById('arm-path-r');
+    const bicepVeins = document.getElementById('bicep-veins');
+    const bicepVeinL = document.getElementById('bicep-vein-l');
+    const bicepVeinR = document.getElementById('bicep-vein-r');
+    const shockwavesLayer = document.getElementById('shockwaves-layer');
+    const sfxBubble = document.getElementById('sfx-bubble');
+    const sfxText = document.getElementById('sfx-text');
+
+    // 面部与身体
+    const shirtBody = document.getElementById('shirt-body');
+    const faceBase = document.getElementById('face-base');
+    const earL = document.getElementById('ear-l');
+    const earR = document.getElementById('ear-r');
+    const chinCushion = document.getElementById('chin-cushion');
+    const bellyStrip = document.getElementById('belly-strip');
+    const foreheadVein = document.getElementById('forehead-vein');
+
+    const eyesNormal = document.getElementById('eyes-normal');
+    const browsFrown = document.getElementById('brows-frown');
+    const eyesBulge = document.getElementById('eyes-bulge');
+    const pupilL = document.getElementById('pupil-l');
+    const pupilR = document.getElementById('pupil-r');
+    const teethClench = document.getElementById('teeth-clench');
+    const mouthScream = document.getElementById('mouth-scream');
+    const sweatDrops = document.getElementById('sweat-drops');
+
+    // 控制台 UI
+    const sliderRail = document.getElementById('slider-rail');
+    const sliderFill = document.getElementById('slider-fill');
+    const sliderHandle = document.getElementById('slider-handle');
+    const badgeLevel = document.getElementById('badge-level');
+    const badgeHint = document.getElementById('badge-hint');
+    const btnAutoWorkout = document.getElementById('btn-auto-workout');
+    const repDisplay = document.getElementById('rep-display');
+
+    /* ==========================================================
+       插值与色彩过渡算法
+       ========================================================== */
+    function lerp(a, b, t) {
+      return a + (b - a) * t;
+    }
+
+    function lerpColor(c1, c2, t) {
+      const r = Math.round(c1[0] + (c2[0] - c1[0]) * t);
+      const g = Math.round(c1[1] + (c2[1] - c1[1]) * t);
+      const b = Math.round(c1[2] + (c2[2] - c1[2]) * t);
+      return `rgb(${r}, ${g}, ${b})`;
+    }
+
+    const COLOR_WHITE = [255, 255, 255];
+    const COLOR_ORANGE = [255, 136, 40];
+    const COLOR_RED = [230, 43, 43];
+
+    const SKIN_PINK = [240, 100, 151];
+    const SKIN_FLUSHED = [228, 55, 95];
+    const SKIN_DEEP_RED = [205, 25, 65];
+
+    /* ==========================================================
+       核心骨骼动力学引擎：手臂永远无缝连接，躯干向上拔升！
+       ========================================================== */
+    function renderPullup(p) {
+      // 1. 引体向上垂直拔升位移：从 0 (悬垂) 向上拔高 195px
+      const MAX_LIFT = 195;
+      const liftY = -p * MAX_LIFT;
+
+      // 力量震颤 (随着拉力增大，身体与手臂产生高频肌肉紧绷微颤)
+      const jitterX = (Math.random() - 0.5) * p * 6;
+      const jitterY = (Math.random() - 0.5) * p * 3.5;
+
+      bodyLiftGroup.setAttribute('transform', `translate(${jitterX}, ${liftY + jitterY})`);
+
+      // 2. 双臂运动学逆向解算：手腕锁死在单杠 (401, 222) 和 (599, 222)
+      const handLX = 401, handLY = 222;
+      const handRX = 599, handRY = 222;
+
+      const baseShoulderY = 355;
+      const currentShoulderY = baseShoulderY + liftY + jitterY;
+      const shoulderLX = 435 + jitterX;
+      const shoulderRX = 565 + jitterX;
+
+      const elbowLX = lerp(412, 335, p) + jitterX * 0.5;
+      const elbowLY = lerp(290, 275, p) + jitterY * 0.5;
+
+      const elbowRX = lerp(588, 665, p) + jitterX * 0.5;
+      const elbowRY = lerp(290, 275, p) + jitterY * 0.5;
+
+      // 绘制一体化紧绷肌肉双臂
+      armPathL.setAttribute('d', `M ${handLX} ${handLY} Q ${elbowLX} ${elbowLY} ${shoulderLX} ${currentShoulderY}`);
+      armPathR.setAttribute('d', `M ${handRX} ${handRY} Q ${elbowRX} ${elbowRY} ${shoulderRX} ${currentShoulderY}`);
+
+      // 二头肌充血青筋跟随手臂曲线同步绘制
+      if (p > 0.4) {
+        bicepVeins.setAttribute('opacity', `${(p - 0.4) / 0.6}`);
+        bicepVeinL.setAttribute('d', `M ${elbowLX + 12} ${elbowLY} Q ${shoulderLX - 8} ${currentShoulderY - 20} ${shoulderLX} ${currentShoulderY}`);
+        bicepVeinR.setAttribute('d', `M ${elbowRX - 12} ${elbowRY} Q ${shoulderRX + 8} ${currentShoulderY - 20} ${shoulderRX} ${currentShoulderY}`);
+      } else {
+        bicepVeins.setAttribute('opacity', '0');
+      }
+
+      // 3. 背心颜色渐变：白 -> 橙 -> 赤红
+      let shirtColor = '#ffffff';
+      if (p <= 0.5) {
+        shirtColor = lerpColor(COLOR_WHITE, COLOR_ORANGE, p / 0.5);
+      } else {
+        shirtColor = lerpColor(COLOR_ORANGE, COLOR_RED, (p - 0.5) / 0.5);
+      }
+      shirtBody.setAttribute('fill', shirtColor);
+
+      // 4. 肤色充血涨红过渡
+      let skinColor = '#f06497';
+      if (p <= 0.6) {
+        skinColor = lerpColor(SKIN_PINK, SKIN_FLUSHED, p / 0.6);
+      } else {
+        skinColor = lerpColor(SKIN_FLUSHED, SKIN_DEEP_RED, (p - 0.6) / 0.4);
+      }
+      faceBase.setAttribute('fill', skinColor);
+      earL.setAttribute('fill', skinColor);
+      earR.setAttribute('fill', skinColor);
+      chinCushion.setAttribute('fill', skinColor);
+      bellyStrip.setAttribute('fill', skinColor);
+
+      // 5. 阶段表情与音效触发状态机
+      if (p < 0.25) {
+        eyesNormal.style.opacity = '1';
+        browsFrown.style.opacity = p > 0.08 ? '1' : '0';
+        eyesBulge.style.opacity = '0';
+        teethClench.style.opacity = '0';
+        mouthScream.style.opacity = '0';
+        sweatDrops.style.opacity = '0';
+        foreheadVein.style.opacity = '0';
+        shockwavesLayer.setAttribute('opacity', '0');
+
+        if (p > 0.08) {
+          sfxBubble.setAttribute('opacity', '1');
+          sfxText.textContent = '嘿！';
+          sfxText.setAttribute('fill', '#1b1c1d');
+          badgeLevel.textContent = '发力起步';
+          badgeLevel.className = 'px-2 py-0.5 rounded-md text-[10px] font-black bg-amber-400 text-slate-900';
+          badgeHint.textContent = '【动作】手肘微屈 | 【真人配音】“嘿！” | 【音效】单杠受力呻吟';
+        } else {
+          sfxBubble.setAttribute('opacity', '0');
+          badgeLevel.textContent = '悬垂待机';
+          badgeLevel.className = 'px-2 py-0.5 rounded-md text-[10px] font-black bg-slate-300 text-slate-800';
+          badgeHint.textContent = '向上托拽壮汉身体或推升右侧滑块，引体向上拉过单杠！';
+        }
+      } 
+      else if (p < 0.75) {
+        eyesNormal.style.opacity = '0';
+        browsFrown.style.opacity = '1';
+        eyesBulge.style.opacity = '0';
+        teethClench.style.opacity = '1';
+        mouthScream.style.opacity = '0';
+        sweatDrops.style.opacity = '0.9';
+        foreheadVein.style.opacity = '0.5';
+        shockwavesLayer.setAttribute('opacity', '0');
+
+        sfxBubble.setAttribute('opacity', '1');
+        sfxText.textContent = '嗯——！！';
+        sfxText.setAttribute('fill', '#ff7700');
+        badgeLevel.textContent = '咬牙半程';
+        badgeLevel.className = 'px-2 py-0.5 rounded-md text-[10px] font-black bg-orange-400 text-white';
+        badgeHint.textContent = '【动作】手肘深屈 | 【真人配音】“嗯——！！” | 【声效】粗重喘息+心跳加速';
+      } 
+      else {
+        eyesNormal.style.opacity = '0';
+        browsFrown.style.opacity = '1';
+        eyesBulge.style.opacity = '1';
+        teethClench.style.opacity = '0';
+        mouthScream.style.opacity = '1';
+        sweatDrops.style.opacity = '1';
+        foreheadVein.style.opacity = '1';
+
+        const pupilJitter = (Math.random() - 0.5) * 3;
+        pupilL.setAttribute('cx', 465 + pupilJitter);
+        pupilR.setAttribute('cx', 535 + pupilJitter);
+
+        const shockOpacity = (p - 0.75) / 0.25;
+        shockwavesLayer.setAttribute('opacity', `${shockOpacity}`);
+
+        sfxBubble.setAttribute('opacity', '1');
+        sfxText.textContent = '啊——！！！';
+        sfxText.setAttribute('fill', '#e62b2b');
+        badgeLevel.textContent = '下巴过杠！';
+        badgeLevel.className = 'px-2 py-0.5 rounded-md text-[10px] font-black bg-rose-600 text-white animate-pulse';
+        badgeHint.textContent = '【动作】下巴跃过横杆！ | 【真人配音】“啊——！拉过了！” | 【声效】胜利金钟鸣响！';
+      }
+
+      // 实时音频阶梯触发与心跳循环
+      checkRealAudioTrigger(p);
+
+      // 6. 更新滑杆 UI
+      const percent = Math.round(p * 100);
+      sliderFill.style.height = `${percent}%`;
+      sliderHandle.style.bottom = `${percent}%`;
+
+      sfxBubble.setAttribute('transform', `translate(${620 + jitterX}, ${160 + liftY * 0.7})`);
+    }
+
+    /* 阶段性真实发力音效触发 */
+    function checkRealAudioTrigger(p) {
+      sound.updateHeartbeatLoop(p);
+
+      if (p >= 0.95 && sound.lastLevel < 3) {
+        sound.lastLevel = 3;
+        sound.speakVoice('啊——！拉过了！', 0.7, 1.25);
+        sound.playVictoryGong();
+      } else if (p >= 0.45 && p < 0.95 && sound.lastLevel < 2) {
+        sound.lastLevel = 2;
+        sound.speakVoice('嗯——！', 0.75, 0.95);
+        sound.playBreath();
+      } else if (p >= 0.15 && p < 0.45 && sound.lastLevel < 1) {
+        sound.lastLevel = 1;
+        sound.speakVoice('嘿！', 0.82, 1.3);
+        sound.playBarStrain();
+      } else if (p < 0.1) {
+        sound.lastLevel = 0;
+      }
+    }
+    /* ==========================================================
+       手势与交互事件监听 (直接向上拖拽身体 或 向上推滑块)
+       ========================================================== */
+    interactiveCharacter.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      stopAutoWorkout();
+      sound.init();
+      state.isDragging = true;
+      state.dragSource = 'character';
+      state.startY = e.clientY;
+      state.startProgress = state.progress;
+      highlightActiveTab(null);
+    });
+
+    sliderRail.parentElement.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      stopAutoWorkout();
+      sound.init();
+      state.isDragging = true;
+      state.dragSource = 'slider';
+      handleSliderPointer(e);
+      highlightActiveTab(null);
+    });
+
+    window.addEventListener('pointermove', (e) => {
+      if (!state.isDragging) return;
+
+      if (state.dragSource === 'character') {
+        const deltaY = state.startY - e.clientY;
+        const newP = Math.max(0, Math.min(1, state.startProgress + deltaY / 180));
+        state.progress = newP;
+        renderPullup(state.progress);
+      } else if (state.dragSource === 'slider') {
+        handleSliderPointer(e);
+      }
+    });
+
+    function handleSliderPointer(e) {
+      const rect = sliderRail.getBoundingClientRect();
+      const relativeY = rect.bottom - e.clientY;
+      const ratio = Math.max(0, Math.min(1, relativeY / rect.height));
+      state.progress = ratio;
+      renderPullup(state.progress);
+    }
+
+    // 松手时弹簧式平滑下坠复位 (Drop back to Hang 0)
+    window.addEventListener('pointerup', () => {
+      if (!state.isDragging) return;
+      state.isDragging = false;
+      sound.stopHeartbeat();
+      springDropToHang();
+    });
+
+    window.addEventListener('pointercancel', () => {
+      if (state.isDragging) {
+        state.isDragging = false;
+        sound.stopHeartbeat();
+        springDropToHang();
+      }
+    });
+
+    function springDropToHang() {
+      const startP = state.progress;
+      const duration = 280;
+      const startTime = performance.now();
+
+      function step(now) {
+        const elapsed = now - startTime;
+        const progress = Math.min(1, elapsed / duration);
+        const ease = 1 - Math.pow(1 - progress, 3);
+        state.progress = startP * (1 - ease);
+        renderPullup(state.progress);
+
+        if (progress < 1) {
+          requestAnimationFrame(step);
+        } else {
+          state.progress = 0;
+          renderPullup(0);
+          highlightActiveTab(0);
+        }
+      }
+      requestAnimationFrame(step);
+    }
+
+    /* ==========================================================
+       快捷预设与自动连续引体向上锻炼模式
+       ========================================================== */
+    function setPullupPreset(val) {
+      stopAutoWorkout();
+      sound.init();
+      state.isDragging = false;
+      state.progress = val;
+      renderPullup(val);
+      highlightActiveTab(val);
+    }
+
+    function highlightActiveTab(val) {
+      const tabs = [
+        { id: 'tab-0', val: 0 },
+        { id: 'tab-1', val: 0.35 },
+        { id: 'tab-2', val: 0.70 },
+        { id: 'tab-3', val: 1.0 }
+      ];
+      tabs.forEach(t => {
+        const el = document.getElementById(t.id);
+        if (val !== null && Math.abs(t.val - val) < 0.12) {
+          el.classList.add('active');
+        } else {
+          el.classList.remove('active');
+        }
+      });
+    }
+
+    // 自动连续引体向上锻炼
+    btnAutoWorkout.addEventListener('click', () => {
+      sound.init();
+      if (state.autoWorkoutActive) {
+        stopAutoWorkout();
+      } else {
+        startAutoWorkout();
+      }
+    });
+
+    function startAutoWorkout() {
+      state.autoWorkoutActive = true;
+      btnAutoWorkout.classList.add('bg-amber-300', 'border-amber-400');
+      let workoutPhase = 0;
+
+      function workoutLoop() {
+        if (!state.autoWorkoutActive) return;
+        workoutPhase += 0.038;
+        const p = (Math.sin(workoutPhase) + 1) * 0.5;
+        state.progress = p;
+        renderPullup(p);
+
+        if (p > 0.96 && !state.hasCountedCurrentRep) {
+          state.repCount++;
+          repDisplay.textContent = `${state.repCount} 次`;
+          state.hasCountedCurrentRep = true;
+        } else if (p < 0.2) {
+          state.hasCountedCurrentRep = false;
+        }
+
+        requestAnimationFrame(workoutLoop);
+      }
+      requestAnimationFrame(workoutLoop);
+    }
+
+    function stopAutoWorkout() {
+      state.autoWorkoutActive = false;
+      sound.stopHeartbeat();
+      btnAutoWorkout.classList.remove('bg-amber-300', 'border-amber-400');
+    }
+
+    // 初始渲染为悬垂待机姿势
+    renderPullup(0);
+  </script>
+</body>
+</html>

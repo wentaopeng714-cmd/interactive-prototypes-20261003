@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>包豪斯动能网格 - Kinetic Bauhaus Grid</title>
+  <script src="https://cdn.jsdelivr.net/npm/p5@1.9.0/lib/p5.min.js"></script>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    body, html {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #121316;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    canvas {
+      display: block;
+      touch-action: none;
+    }
+    /* 悬浮控制面板 */
+    #hud {
+      position: absolute;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(22, 24, 29, 0.75);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      padding: 10px 18px;
+      border-radius: 999px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      color: #e5e5e7;
+      font-size: 13px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+      z-index: 100;
+      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .hud-btn {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: #fff;
+      padding: 6px 14px;
+      border-radius: 20px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 500;
+      transition: all 0.2s;
+      outline: none;
+    }
+    .hud-btn:hover {
+      background: rgba(255, 255, 255, 0.2);
+      transform: translateY(-1px);
+    }
+    .hud-btn:active {
+      transform: scale(0.96);
+    }
+    .hud-label {
+      color: rgba(255, 255, 255, 0.6);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+    }
+    /* 底部操作引导 */
+    #tip {
+      position: absolute;
+      bottom: 22px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: rgba(255, 255, 255, 0.45);
+      font-size: 12px;
+      letter-spacing: 1px;
+      pointer-events: none;
+      transition: opacity 0.5s;
+    }
+  </style>
+</head>
+<body oncontextmenu="return false;">
+
+  <!-- 顶部交互控制栏 -->
+  <div id="hud">
+    <button class="hud-btn" id="regenBtn">✨ 变换构图</button>
+    <button class="hud-btn" id="paletteBtn">🎨 换调色板</button>
+    <div class="hud-label">
+      <span>模式:</span>
+      <select id="modeSelect" style="background:transparent; color:#fff; border:none; outline:none; cursor:pointer;">
+        <option value="magnetic" style="background:#222;">🧲 磁性果冻</option>
+        <option value="ripple" style="background:#222;">🌊 几何震荡波</option>
+        <option value="paint" style="background:#222;">🖌️ 墨水渗透染</option>
+      </select>
+    </div>
+    <button class="hud-btn" id="audioToggle">🔊 声音: 开</button>
+  </div>
+
+  <div id="tip">滑动触摸排开磁场 | 单击渗透扩散 | 空格或右键快速重构</div>
+
+  <script>
+    let grid = [], targetGrid = [];
+    let ncols = 0, nrows = 0, ncells = 0;
+    let cellSize = 0, marginLeft = 0, marginTop = 0;
+    const minMargin = 0.04;
+
+    // 基于原版包豪斯与OKLCH变体的经典调色板库
+    const basePalettes = [
+      ["#E8DBC3", "#6E737D", "#131B1D", "#DD7E5C", "#EBA32A", "#686F4B", "#505382"],
+      ["#F3D4D4", "#687676", "#161B16", "#CB7CBB", "#FF8AA0", "#84624E", "#116372"],
+      ["#D0E3CD", "#787079", "#17191F", "#B09C2D", "#8DC75D", "#477569", "#744767"],
+      ["#C7E4D8", "#7B6F74", "#1A181E", "#89A94B", "#45D091", "#437478", "#7C4552"],
+      ["#EAE1D0", "#3E454C", "#E05A47", "#F0A83B", "#386890", "#2E3138"]
+    ];
+
+    let currentPalette = [];
+    let targetPalette = [];
+    let paletteLerp = 1.0;
+
+    // 单元格动态物理状态 (Spring & Ripple Physics)
+    let cellStates = [];
+    let ripples = [];
+    let floodQueue = [];
+    let isFlooding = false;
+
+    // 交互模式: 'magnetic' (引力果冻), 'ripple' (波动形变), 'paint' (实时渗透)
+    let interactMode = 'magnetic';
+    let soundEnabled = true;
+
+    let audioCtx = null;
+    const pentatonicScale = [261.63, 293.66, 329.63, 392.00, 440.00, 523.25, 587.33, 659.25]; // C大调五声音阶
+
+    function initAudio() {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+    }
+
+    function playBlip(freqIndex, intensity = 0.2) {
+      if (!soundEnabled || !audioCtx) return;
+      try {
+        const now = audioCtx.currentTime;
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        const filter = audioCtx.createBiquadFilter();
+
+        const freq = pentatonicScale[Math.abs(freqIndex) % pentatonicScale.length];
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, now);
+
+        // 柔和低通滤波，模拟温润的木质打击乐/水滴触感
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(1800, now);
+        filter.frequency.exponentialRampToValueAtTime(300, now + 0.18);
+
+        gain.gain.setValueAtTime(intensity * 0.35, now);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.2);
+
+        osc.connect(filter);
+        filter.connect(gain);
+        gain.connect(audioCtx.destination);
+
+        osc.start(now);
+        osc.stop(now + 0.22);
+      } catch (e) {}
+    }
+
+    const idx = (col, row) => row * ncols + col;
+    const colOf = (i) => i % ncols;
+    const rowOf = (i) => Math.floor(i / ncols);
+
+    function setup() {
+      createCanvas(windowWidth, windowHeight);
+      pixelDensity(min(window.devicePixelRatio || 1, 2));
+
+      currentPalette = [...basePalettes[0]];
+      targetPalette = [...basePalettes[0]];
+
+      initGridGeometry();
+      generateGridInstant();
+
+      setupDOMEvents();
+    }
+
+    function initGridGeometry() {
+      let n = width < 768 ? 8 : 12; // 移动端自适应列数
+      if (width < height) {
+        ncols = n;
+        cellSize = Math.round((width * (1 - 2 * minMargin)) / n);
+        nrows = Math.floor((height * (1 - 2 * minMargin)) / cellSize);
+      } else {
+        nrows = n;
+        cellSize = Math.round((height * (1 - 2 * minMargin)) / n);
+        ncols = Math.floor((width * (1 - 2 * minMargin)) / cellSize);
+      }
+      marginLeft = Math.round((width - ncols * cellSize) / 2);
+      marginTop = Math.round((height - nrows * cellSize) / 2);
+      ncells = nrows * ncols;
+
+      // 初始化每个格子的物理弹簧状态
+      cellStates = [];
+      for (let i = 0; i < ncells; i++) {
+        cellStates.push({
+          scale: 0.0,            // 初始入场缩放
+          targetScale: 1.0,
+          scaleVel: 0.0,
+          offsetX: 0.0,          // 磁性拉伸偏移
+          offsetY: 0.0,
+          targetOffX: 0.0,
+          targetOffY: 0.0,
+          colorIdx: 0,
+          currColor: color(currentPalette[0]),
+          targetColor: color(currentPalette[0]),
+          colorLerpT: 1.0
+        });
+      }
+    }
+
+    function generateGridInstant() {
+      grid = new Array(ncells).fill(-1);
+      let ncolors = currentPalette.length;
+      let fillCount = ncells;
+      let fillColor = 0;
+      let frag = random([0.25, 0.4, 0.6, 0.8]);
+      let fillQuota = Math.max(2, Math.floor((ncells / ncolors) * frag));
+
+      while (fillCount > fillQuota) {
+        const filled = fillGridRegion(fillQuota, fillColor);
+        fillCount -= filled;
+        fillColor = (fillColor + 1) % ncolors;
+      }
+      for (let i = 0; i < ncells; i++) {
+        if (grid[i] === -1) grid[i] = fillColor;
+      }
+
+      // 同步给物理状态并激活动画
+      for (let i = 0; i < ncells; i++) {
+        cellStates[i].colorIdx = grid[i];
+        cellStates[i].targetColor = color(currentPalette[grid[i]]);
+        cellStates[i].colorLerpT = 0.0;
+        cellStates[i].scale = 0.2; // 弹性爆开入场
+      }
+      playBlip(3, 0.4);
+    }
+
+    function fillGridRegion(count, c) {
+      const empty = [];
+      for (let i = 0; i < ncells; i++) if (grid[i] === -1) empty.push(i);
+      if (empty.length === 0) return 0;
+      let seed = empty[Math.floor(random(empty.length))];
+
+      let dir = [[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1],[1,-1]];
+      // 随机旋转扩散方向
+      let shift = Math.floor(random(8));
+      dir = [...dir.slice(shift), ...dir.slice(0, shift)];
+
+      let filled = 0;
+      let queue = [seed];
+      while (filled < count && queue.length > 0) {
+        let curr = queue.shift();
+        if (grid[curr] === -1) {
+          grid[curr] = c;
+          filled++;
+          let cX = colOf(curr);
+          let cY = rowOf(curr);
+          for (let [dcol, drow] of dir) {
+            let nX = cX + dcol, nY = cY + drow;
+            if (nX >= 0 && nX < ncols && nY >= 0 && nY < nrows) {
+              queue.push(idx(nX, nY));
+            }
+          }
+        }
+      }
+      return filled;
+    }
+
+    function getNeighbors(col, row) {
+      const left = Math.max(col - 1, 0);
+      const right = Math.min(col + 1, ncols - 1);
+      const up = Math.max(row - 1, 0);
+      const down = Math.min(row + 1, nrows - 1);
+      const get = (c, r) => cellStates[idx(c, r)].colorIdx;
+
+      return {
+        NE: get(left, up),
+        E:  get(left, row),
+        SE: get(left, down),
+        N:  get(col, up),
+        C:  get(col, row),
+        S:  get(col, down),
+        NW: get(right, up),
+        W:  get(right, row),
+        SW: get(right, down),
+      };
+    }
+
+    function draw() {
+      background(18, 19, 23);
+
+      updateInteractionsAndPhysics();
+      drawRipplesVisual();
+
+      push();
+      noStroke();
+      const r = cellSize / 2;
+
+      for (let i = 0; i < ncols; i++) {
+        let baseX = i * cellSize + marginLeft;
+        for (let j = 0; j < nrows; j++) {
+          let baseY = j * cellSize + marginTop;
+          let cellIdx = idx(i, j);
+          let state = cellStates[cellIdx];
+
+          // 物理弹性计算出的中心点
+          let cx = baseX + r + state.offsetX;
+          let cy = baseY + r + state.offsetY;
+          let curScale = Math.max(0.01, state.scale);
+
+          let { NE, N, NW, E, C, W, SE, S, SW } = getNeighbors(i, j);
+          let ne = +(NE == N && NE == E && NE != C),
+              nw = +(NW == N && NW == W && NW != C),
+              se = +(SE == S && SE == E && SE != C),
+              sw = +(SW == S && SW == W && SW != C);
+
+          let code = "" + ne + nw + se + sw;
+
+          push();
+          translate(cx, cy);
+          scale(curScale);
+
+          // 绘制单元格图元组合
+          drawBauhausTile(code, r, NE, NW, SE, SW, C);
+          pop();
+        }
+      }
+      pop();
+
+      // 逐步推进动态墨水扩散队列
+      processFloodStep();
+    }
+
+    function getTileColor(colorIdx) {
+      if (colorIdx < 0 || colorIdx >= currentPalette.length) return color(200);
+      return cellStates[0] ? cellStates[colorIdx % ncells].currColor : color(currentPalette[colorIdx]);
+    }
+
+    function drawBauhausTile(code, r, NE, NW, SE, SW, C) {
+      const colC = getTileColor(C);
+      const colNE = getTileColor(NE);
+      const colNW = getTileColor(NW);
+      const colSE = getTileColor(SE);
+      const colSW = getTileColor(SW);
+
+      switch (code) {
+        case "1111": // 全角相连
+          fill(colNE); triangle(-r, -r, 0, -r, -r, 0);
+          fill(colNW); triangle(r, -r, 0, -r, r, 0);
+          fill(colSE); triangle(-r, r, 0, r, -r, 0);
+          fill(colSW); triangle(r, r, 0, r, r, 0);
+          fill(colC); circle(0, 0, cellSize);
+          break;
+
+        case "1110": // 缺 SW
+          fill(colNE); triangle(-r, -r, 0, -r, -r, 0);
+          fill(colNW); triangle(r, -r, 0, -r, r, 0);
+          fill(colSE); triangle(-r, r, 0, r, -r, 0);
+          fill(colC);  triangle(r, r, 0, r, r, 0);
+          fill(colC);  circle(0, 0, cellSize);
+          break;
+
+        case "1101": // 缺 SE
+          fill(colNE); triangle(-r, -r, 0, -r, -r, 0);
+          fill(colNW); triangle(r, -r, 0, -r, r, 0);
+          fill(colC);  triangle(-r, r, 0, r, -r, 0);
+          fill(colSW); triangle(r, r, 0, r, r, 0);
+          fill(colC);  circle(0, 0, cellSize);
+          break;
+
+        case "1011": // 缺 NW
+          fill(colNE); triangle(-r, -r, 0, -r, -r, 0);
+          fill(colC);  triangle(r, -r, 0, -r, r, 0);
+          fill(colSE); triangle(-r, r, 0, r, -r, 0);
+          fill(colSW); triangle(r, r, 0, r, r, 0);
+          fill(colC);  circle(0, 0, cellSize);
+          break;
+
+        case "0111": // 缺 NE
+          fill(colC);  triangle(-r, -r, 0, -r, -r, 0);
+          fill(colNW); triangle(r, -r, 0, -r, r, 0);
+          fill(colSE); triangle(-r, r, 0, r, -r, 0);
+          fill(colSW); triangle(r, r, 0, r, r, 0);
+          fill(colC);  circle(0, 0, cellSize);
+          break;
+
+        case "0011": // SE + SW
+          fill(colC);  rect(-r, -r, cellSize, r);
+          fill(colSE); triangle(-r, r, 0, r, -r, 0);
+          fill(colSW); triangle(r, r, 0, r, r, 0);
+          fill(colC);  circle(0, 0, cellSize);
+          break;
+
+        case "1100": // NE + NW
+          fill(colNE); triangle(-r, -r, 0, -r, -r, 0);
+          fill(colNW); triangle(r, -r, 0, -r, r, 0);
+          fill(colC);  rect(-r, 0, cellSize, r);
+          fill(colC);  circle(0, 0, cellSize);
+          break;
+
+        case "1010": // NE + SE
+          fill(colNE); triangle(-r, -r, 0, -r, -r, 0);
+          fill(colSE); triangle(-r, r, 0, r, -r, 0);
+          fill(colC);  rect(0, -r, r, cellSize);
+          fill(colC);  circle(0, 0, cellSize);
+          break;
+
+        case "0101": // NW + SW
+          fill(colNW); triangle(r, -r, 0, -r, r, 0);
+          fill(colSW); triangle(r, r, 0, r, r, 0);
+          fill(colC);  rect(-r, -r, r, cellSize);
+          fill(colC);  circle(0, 0, cellSize);
+          break;
+
+        case "1001": // NE + SW
+          fill(colNE); triangle(-r, -r, 0, -r, -r, 0);
+          fill(colC);  triangle(r, -r, 0, -r, r, 0);
+          fill(colC);  triangle(-r, r, 0, r, -r, 0);
+          fill(colSW); triangle(r, r, 0, r, r, 0);
+          fill(colC);  circle(0, 0, cellSize);
+          break;
+
+        case "0110": // NW + SE
+          fill(colC);  triangle(-r, -r, 0, -r, -r, 0);
+          fill(colNW); triangle(r, -r, 0, -r, r, 0);
+          fill(colSE); triangle(-r, r, 0, r, -r, 0);
+          fill(colC);  triangle(r, r, 0, r, r, 0);
+          fill(colC);  circle(0, 0, cellSize);
+          break;
+
+        case "0001": // SW
+          fill(colC);  rect(-r, -r, cellSize, cellSize);
+          fill(colSW); rect(0, 0, r, r);
+          fill(colC);  circle(0, 0, cellSize);
+          break;
+
+        case "0010": // SE
+          fill(colC);  rect(-r, -r, cellSize, cellSize);
+          fill(colSE); rect(-r, 0, r, r);
+          fill(colC);  circle(0, 0, cellSize);
+          break;
+
+        case "0100": // NW
+          fill(colC);  rect(-r, -r, cellSize, cellSize);
+          fill(colNW); rect(0, -r, r, r);
+          fill(colC);  circle(0, 0, cellSize);
+          break;
+
+        case "1000": // NE
+          fill(colC);  rect(-r, -r, cellSize, cellSize);
+          fill(colNE); rect(-r, -r, r, r);
+          fill(colC);  circle(0, 0, cellSize);
+          break;
+
+        default: // 0000 基础色块
+          fill(colC);
+          rect(-r, -r, cellSize, cellSize);
+          break;
+      }
+    }
+
+    let lastHoverCell = -1;
+
+    function updateInteractionsAndPhysics() {
+      const mx = mouseX, my = mouseY;
+      const mouseSpeed = dist(mouseX, mouseY, pmouseX, pmouseY);
+      const isMouseActive = (mouseX > 0 && mouseX < width && mouseY > 0 && mouseY < height);
+
+      // 计算当前光标悬停单元格
+      let hCol = Math.floor((mx - marginLeft) / cellSize);
+      let hRow = Math.floor((my - marginTop) / cellSize);
+      let hoverIdx = -1;
+      if (hCol >= 0 && hCol < ncols && hRow >= 0 && hRow < nrows) {
+        hoverIdx = idx(hCol, hRow);
+      }
+
+      if (hoverIdx !== -1 && hoverIdx !== lastHoverCell && mouseSpeed > 1.5) {
+        lastHoverCell = hoverIdx;
+        playBlip(cellStates[hoverIdx].colorIdx + hCol, 0.15);
+      }
+
+      for (let i = 0; i < ncols; i++) {
+        let cellCenterX = i * cellSize + marginLeft + cellSize / 2;
+        for (let j = 0; j < nrows; j++) {
+          let cellCenterY = j * cellSize + marginTop + cellSize / 2;
+          let k = idx(i, j);
+          let s = cellStates[k];
+
+          // 1. 磁性引力场
+          let dMouse = dist(mx, my, cellCenterX, cellCenterY);
+          let magnetRadius = cellSize * 2.8;
+
+          if (interactMode === 'magnetic' && isMouseActive && dMouse < magnetRadius) {
+            let pull = (1 - dMouse / magnetRadius);
+            let angle = Math.atan2(my - cellCenterY, mx - cellCenterX);
+            let force = pull * (cellSize * 0.38);
+
+            s.targetOffX = Math.cos(angle) * force;
+            s.targetOffY = Math.sin(angle) * force;
+            s.targetScale = 1.0 + pull * 0.22;
+          } else {
+            s.targetOffX = 0;
+            s.targetOffY = 0;
+            s.targetScale = 1.0;
+          }
+
+          // 2. 遍历涟漪波对其造成的影响
+          for (let rip of ripples) {
+            let dRip = dist(rip.x, rip.y, cellCenterX, cellCenterY);
+            let waveDist = Math.abs(dRip - rip.currentRadius);
+            if (waveDist < rip.width) {
+              let waveFactor = (1 - waveDist / rip.width) * rip.strength;
+              s.targetScale += waveFactor * 0.45;
+              let ang = Math.atan2(cellCenterY - rip.y, cellCenterX - rip.x);
+              s.targetOffX += Math.cos(ang) * waveFactor * (cellSize * 0.3);
+              s.targetOffY += Math.sin(ang) * waveFactor * (cellSize * 0.3);
+            }
+          }
+
+          // 3. 弹簧力学更新 (Spring-Damper)
+          let springK = 0.16;
+          let damping = 0.72;
+
+          s.offsetX += (s.targetOffX - s.offsetX) * 0.2;
+          s.offsetY += (s.targetOffY - s.offsetY) * 0.2;
+
+          let scaleForce = (s.targetScale - s.scale) * springK;
+          s.scaleVel = (s.scaleVel + scaleForce) * damping;
+          s.scale += s.scaleVel;
+
+          // 4. 平滑颜色插值 (Color Lerp)
+          if (s.colorLerpT < 1.0) {
+            s.colorLerpT += 0.045;
+            s.currColor = lerpColor(s.currColor, s.targetColor, s.colorLerpT);
+          }
+        }
+      }
+
+      // 更新并修剪涟漪
+      for (let r = ripples.length - 1; r >= 0; r--) {
+        let rip = ripples[r];
+        rip.currentRadius += rip.speed;
+        rip.strength *= 0.95;
+        if (rip.strength < 0.01 || rip.currentRadius > rip.maxRadius) {
+          ripples.splice(r, 1);
+        }
+      }
+    }
+
+    function drawRipplesVisual() {
+      push();
+      noFill();
+      for (let rip of ripples) {
+        stroke(255, 255, 255, rip.strength * 90);
+        strokeWeight(2);
+        circle(rip.x, rip.y, rip.currentRadius * 2);
+      }
+      pop();
+    }
+
+    function triggerRipple(x, y, strength = 1.0) {
+      initAudio();
+      ripples.push({
+        x: x,
+        y: y,
+        currentRadius: 5,
+        maxRadius: Math.max(width, height) * 0.85,
+        speed: 16,
+        width: cellSize * 1.8,
+        strength: strength
+      });
+      playBlip(Math.floor(random(8)), 0.35);
+    }
+
+    // 墨水渗透动态算法
+    function triggerFloodInfection(startX, startY) {
+      let c = Math.floor((startX - marginLeft) / cellSize);
+      let r = Math.floor((startY - marginTop) / cellSize);
+      if (c < 0 || c >= ncols || r < 0 || r >= nrows) return;
+
+      let startIdx = idx(c, r);
+      let newColIdx = (cellStates[startIdx].colorIdx + 1) % currentPalette.length;
+
+      floodQueue = [{ idx: startIdx, dist: 0 }];
+      isFlooding = true;
+      playBlip(newColIdx, 0.4);
+    }
+
+    function processFloodStep() {
+      if (!isFlooding || floodQueue.length === 0) return;
+
+      // 每次取出一批相邻格子扩散
+      let batchSize = 3;
+      for (let b = 0; b < batchSize && floodQueue.length > 0; b++) {
+        let { idx: curr, dist: step } = floodQueue.shift();
+        let s = cellStates[curr];
+
+        let nextColor = (s.colorIdx + 1) % currentPalette.length;
+        s.colorIdx = nextColor;
+        s.targetColor = color(currentPalette[nextColor]);
+        s.colorLerpT = 0.0;
+        s.scaleVel += 0.15; // 鼓胀弹跳
+
+        let c = colOf(curr);
+        let r = rowOf(curr);
+        let neighbors = [[c+1, r], [c-1, r], [c, r+1], [c, r-1]];
+
+        for (let [nc, nr] of neighbors) {
+          if (nc >= 0 && nc < ncols && nr >= 0 && nr < nrows) {
+            let nIdx = idx(nc, nr);
+            if (cellStates[nIdx].colorIdx !== nextColor && !floodQueue.some(item => item.idx === nIdx)) {
+              floodQueue.push({ idx: nIdx, dist: step + 1 });
+            }
+          }
+        }
+      }
+      if (floodQueue.length === 0) isFlooding = false;
+    }
+
+    function mouseMoved() {
+      if (interactMode === 'ripple' && dist(mouseX, mouseY, pmouseX, pmouseY) > 25) {
+        if (frameCount % 6 === 0) {
+          triggerRipple(mouseX, mouseY, 0.4);
+        }
+      }
+    }
+
+    function mouseDragged() {
+      initAudio();
+      if (interactMode === 'paint') {
+        triggerFloodInfection(mouseX, mouseY);
+      } else if (interactMode === 'ripple' && frameCount % 5 === 0) {
+        triggerRipple(mouseX, mouseY, 0.6);
+      }
+    }
+
+    function mousePressed() {
+      initAudio();
+      // 如果点击在HUD上方则不触发画布事件
+      if (mouseY < 80 && mouseX > width / 2 - 200 && mouseX < width / 2 + 200) return;
+
+      if (interactMode === 'paint') {
+        triggerFloodInfection(mouseX, mouseY);
+      } else {
+        triggerRipple(mouseX, mouseY, 1.2);
+        // 给附近的格子一次强力撞击动能
+        for (let s of cellStates) {
+          s.scaleVel += random(0.1, 0.35);
+        }
+      }
+    }
+
+    function keyPressed() {
+      if (key === ' ') {
+        morphToNewGrid();
+      }
+    }
+
+    function morphToNewGrid() {
+      initAudio();
+      generateGridInstant();
+      triggerRipple(width / 2, height / 2, 0.9);
+    }
+
+    function cyclePalette() {
+      initAudio();
+      let nextPal = random(basePalettes);
+      currentPalette = shuffle([...nextPal]);
+
+      for (let i = 0; i < ncells; i++) {
+        let s = cellStates[i];
+        s.targetColor = color(currentPalette[s.colorIdx % currentPalette.length]);
+        s.colorLerpT = 0.0;
+        s.scaleVel += random(0.08, 0.2);
+      }
+      playBlip(5, 0.3);
+    }
+
+    function windowResized() {
+      resizeCanvas(windowWidth, windowHeight);
+      initGridGeometry();
+      generateGridInstant();
+    }
+
+    function setupDOMEvents() {
+      document.getElementById('regenBtn').addEventListener('click', (e) => {
+        e.stopPropagation();
+        morphToNewGrid();
+      });
+
+      document.getElementById('paletteBtn').addEventListener('click', (e) => {
+        e.stopPropagation();
+        cyclePalette();
+      });
+
+      const modeSelect = document.getElementById('modeSelect');
+      modeSelect.addEventListener('change', (e) => {
+        interactMode = e.target.value;
+      });
+
+      const audioBtn = document.getElementById('audioToggle');
+      audioBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        initAudio();
+        soundEnabled = !soundEnabled;
+        audioBtn.textContent = soundEnabled ? '🔊 声音: 开' : '🔇 声音: 关';
+      });
+    }
+  </script>
+</body>
+</html>
